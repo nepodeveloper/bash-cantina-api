@@ -171,6 +171,8 @@ dotnet tool restore
 dotnet ef migrations list --project src/Cantina.Infrastructure --startup-project src/Cantina.Api
 # With ConnectionStrings__DefaultConnection set, apply migration + role/bootstrap seeding once:
 dotnet run --project src/Cantina.Api -- --initialize-database
+# For a published deployment, run the same one-shot mode before starting the API:
+dotnet Cantina.Api.dll --initialize-database
 # To add a future model change:
 dotnet ef migrations add ChangeName --project src/Cantina.Infrastructure --startup-project src/Cantina.Api
 ```
@@ -182,6 +184,19 @@ instances should set `Database__ApplyMigrations=false` and use a least-privilege
 identity. Back up the database before schema changes.
 
 Compose is a **local development** configuration, not an internet-facing deployment.
+Configuration uses standard ASP.NET Core providers; environment variables use `__`
+in place of `:`:
+
+| Environment variable | Purpose / default |
+|---|---|
+| `ConnectionStrings__DefaultConnection` | Required PostgreSQL connection string; no embedded default |
+| `Database__ApplyMigrations` | `false`; local Compose/debug profiles opt in |
+| `DataProtection__KeysPath` | Durable token-protection key directory; configure for deployment |
+| `BootstrapAdmin__Email`, `BootstrapAdmin__Password` | Optional, new-account-only initial provisioning |
+| `Authentication__RateLimit__PermitLimit` | Auth requests per minute per IP, default 10 |
+| `Catalogue__RateLimit__PermitLimit` | Catalogue requests per minute per IP, default 100 |
+| `Security__HttpsRedirection` | `true` outside Development |
+
 For production:
 
 * Set `ASPNETCORE_ENVIRONMENT=Production`, a restricted `AllowedHosts`, and an external
@@ -243,4 +258,40 @@ benchmarks are kept separate from pass/fail CI to avoid noisy shared-runner thre
 tracked full-catalogue materialization, the actual paginated projection, and a warm
 catalogue cache against the same PostgreSQL dataset on the same machine. See its
 console usage and safety checks before pointing it at a disposable benchmark database.
-Measured results and the exact reproduction command are recorded below after validation.
+It refuses any database name other than `cantina_benchmarks`; setup creates a unique
+schema and cleanup drops **only that schema**. Use a disposable database anyway:
+
+```powershell
+$benchPassword = [Guid]::NewGuid().ToString('N')
+docker run --rm -d --name cantina-benchmarks -p 127.0.0.1:55432:5432 -e POSTGRES_DB=cantina_benchmarks -e "POSTGRES_PASSWORD=$benchPassword" postgres:17-alpine
+# Wait until this succeeds:
+docker exec cantina-benchmarks pg_isready -U postgres -d cantina_benchmarks
+$env:ConnectionStrings__DefaultConnection = "Host=localhost;Port=55432;Database=cantina_benchmarks;Username=postgres;******"
+dotnet run -c Release --project benchmarks/Cantina.Benchmarks -- --filter '*CatalogueBenchmarks*' --job short
+docker stop cantina-benchmarks
+Remove-Item Env:\ConnectionStrings__DefaultConnection
+```
+
+The benchmark seeds 10,000 menu items with ratings, checks that all three paths return
+the identical complete page, and records timing and allocations. The baseline is an
+explicit naive implementation for comparison, not a claim about a previously deployed
+application. Warm-cache results measure the repository, not HTTP/authentication overhead.
+
+Measured on 2026-10-28, on the **same host and dataset**: Ubuntu 24.04.5, AMD EPYC
+9V74 (4 logical / 2 physical cores), 15 GiB RAM, SDK 10.0.401, .NET 10.0.12,
+PostgreSQL 17.11 in Docker. BenchmarkDotNet ShortRun, Release, password-authenticated
+database; 10,000 items, 9,999 ratings, 3,100 matches, identical 20-item result pages:
+
+| Implementation | Mean per request | Allocated per request |
+|---|---:|---:|
+| Tracked full materialization (baseline) | 168.318 ms | 46,679.50 KB |
+| Actual repository, uncached SQL projection | 9.343 ms | 109.27 KB |
+| Actual repository, warm bounded cache | 3.010 µs | 2.39 KB |
+
+The uncached projection was approximately **18× faster** with **427× less managed
+allocation** than the explicit baseline in this run. Every operation creates a fresh
+DbContext; the uncached path forces invalidation, and the warm path is prewarmed outside
+the timed iteration. Setup and cleanup operate on isolated migrated schemas. ShortRun
+uncertainty and shared-host variability are substantial: rerun on your deployment
+hardware rather than treating these numbers as a latency SLA. BenchmarkDotNet writes
+local reports under ignored `BenchmarkDotNet.Artifacts/results/`.

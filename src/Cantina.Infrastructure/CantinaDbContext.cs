@@ -64,7 +64,7 @@ public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
                 table.HasCheckConstraint("CK_MenuItems_Price", "\"Price\" >= 0 AND \"Price\" <= 99999999.99");
                 table.HasCheckConstraint("CK_MenuItems_Name", """length(btrim("Name")) > 0""");
                 table.HasCheckConstraint("CK_MenuItems_Description", """length(btrim("Description")) > 0""");
-                table.HasCheckConstraint("CK_MenuItems_ImageUrl", "\"ImageUrl\" LIKE 'https://%'");
+                table.HasCheckConstraint("CK_MenuItems_ImageUrl", "\"ImageUrl\" ILIKE 'https://%'");
             });
             entity.HasKey(x => x.Id);
             entity.HasAlternateKey(x => new { x.StoreId, x.Id });

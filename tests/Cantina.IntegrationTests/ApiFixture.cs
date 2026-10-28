@@ -65,7 +65,7 @@ public class ApiFixture : IAsyncLifetime
         var email = $"customer-{Guid.NewGuid():N}@example.com";
         using var client = CreateClient();
         await ExpectAsync(await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = Password }),
-            HttpStatusCode.OK, HttpStatusCode.Created, HttpStatusCode.Accepted, HttpStatusCode.NoContent);
+            HttpStatusCode.Accepted);
         return (email, await LoginAsync(email));
     }
 

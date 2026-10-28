@@ -119,6 +119,11 @@ public static class AuthEndpoints
             errors["password"] = [registration
                 ? "Password must contain between 12 and 128 characters."
                 : "Password must contain between 1 and 128 characters."];
+        else if (registration && (!input.Password.Any(c => c is >= 'A' and <= 'Z') ||
+                 !input.Password.Any(c => c is >= 'a' and <= 'z') ||
+                 !input.Password.Any(c => c is >= '0' and <= '9') ||
+                 !input.Password.Any(c => !(c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9'))))
+            errors["password"] = ["Password must include an uppercase letter, a lowercase letter, a digit, and a non-alphanumeric character."];
         if (errors.Count != 0) throw new RequestValidationException(errors);
     }
 

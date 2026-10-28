@@ -3,19 +3,53 @@ using Cantina.Api;
 using Cantina.Application;
 using Cantina.Infrastructure;
 using Microsoft.AspNetCore.Authentication.BearerToken;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi;
 
-var builder = WebApplication.CreateBuilder(args);
+var initializeDatabase = args.Contains("--initialize-database", StringComparer.Ordinal);
+var builder = WebApplication.CreateBuilder(args.Where(arg => arg != "--initialize-database").ToArray());
+builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
 builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = 64 * 1024);
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
     context.ProblemDetails.Extensions["correlationId"] = context.HttpContext.TraceIdentifier);
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi("v1", options =>
+{
+    options.AddDocumentTransformer((document, context, ct) =>
+    {
+        document.Info = new OpenApiInfo
+        {
+            Title = "Bash Cantina API",
+            Version = "v1",
+            Description = "Store-scoped menu catalogue and customer ratings. Authentication uses opaque ASP.NET Core Identity bearer tokens, not JWTs."
+        };
+        document.Components ??= new OpenApiComponents();
+        document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
+        document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
+        {
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "Identity opaque token",
+            Description = "Use accessToken from /api/v1/auth/login or /api/v1/auth/refresh."
+        };
+        return Task.CompletedTask;
+    });
+    options.AddOperationTransformer((operation, context, ct) =>
+    {
+        if (context.Description.ActionDescriptor.EndpointMetadata.OfType<IAuthorizeData>().Any())
+            operation.Security =
+            [
+                new OpenApiSecurityRequirement { [new OpenApiSecuritySchemeReference("Bearer", context.Document)] = [] }
+            ];
+        return Task.CompletedTask;
+    });
+});
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddAuthentication(options =>
 {
@@ -73,6 +107,13 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+if (initializeDatabase)
+{
+    await using (var scope = app.Services.CreateAsyncScope())
+        await SeedData.InitializeAsync(scope.ServiceProvider);
+    await app.DisposeAsync();
+    return;
+}
 app.UseMiddleware<ApiErrors>();
 app.UseStatusCodePages(async context =>
     await ApiErrors.Problem(context.HttpContext, context.HttpContext.Response.StatusCode)

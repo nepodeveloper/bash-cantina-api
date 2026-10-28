@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Cantina.Infrastructure.Migrations
 {
     [DbContext(typeof(CantinaDbContext))]
-    [Migration("20261028080638_InitialCreate")]
+    [Migration("20261028081334_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -68,7 +68,7 @@ namespace Cantina.Infrastructure.Migrations
                         {
                             t.HasCheckConstraint("CK_MenuItems_Description", "length(btrim(\"Description\")) > 0");
 
-                            t.HasCheckConstraint("CK_MenuItems_ImageUrl", "\"ImageUrl\" LIKE 'https://%'");
+                            t.HasCheckConstraint("CK_MenuItems_ImageUrl", "\"ImageUrl\" ILIKE 'https://%'");
 
                             t.HasCheckConstraint("CK_MenuItems_Kind", "\"Kind\" IN (1, 2)");
 
@@ -319,6 +319,7 @@ namespace Cantina.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("NormalizedEmail")
+                        .IsUnique()
                         .HasDatabaseName("EmailIndex");
 
                     b.HasIndex("NormalizedUserName")

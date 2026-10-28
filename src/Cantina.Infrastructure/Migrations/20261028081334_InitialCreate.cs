@@ -191,7 +191,7 @@ namespace Cantina.Infrastructure.Migrations
                     table.PrimaryKey("PK_MenuItems", x => x.Id);
                     table.UniqueConstraint("AK_MenuItems_StoreId_Id", x => new { x.StoreId, x.Id });
                     table.CheckConstraint("CK_MenuItems_Description", "length(btrim(\"Description\")) > 0");
-                    table.CheckConstraint("CK_MenuItems_ImageUrl", "\"ImageUrl\" LIKE 'https://%'");
+                    table.CheckConstraint("CK_MenuItems_ImageUrl", "\"ImageUrl\" ILIKE 'https://%'");
                     table.CheckConstraint("CK_MenuItems_Kind", "\"Kind\" IN (1, 2)");
                     table.CheckConstraint("CK_MenuItems_Name", "length(btrim(\"Name\")) > 0");
                     table.CheckConstraint("CK_MenuItems_Price", "\"Price\" >= 0 AND \"Price\" <= 99999999.99");
@@ -309,7 +309,8 @@ namespace Cantina.Infrastructure.Migrations
             migrationBuilder.CreateIndex(
                 name: "EmailIndex",
                 table: "AspNetUsers",
-                column: "NormalizedEmail");
+                column: "NormalizedEmail",
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "UserNameIndex",

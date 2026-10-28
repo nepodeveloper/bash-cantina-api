@@ -23,7 +23,8 @@ public static class DependencyInjection
             options.Lockout.MaxFailedAccessAttempts = 5;
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
             options.User.RequireUniqueEmail = true;
-        }).AddRoles<IdentityRole>().AddEntityFrameworkStores<CantinaDbContext>();
+        }).AddRoles<IdentityRole>().AddEntityFrameworkStores<CantinaDbContext>()
+            .AddUserStore<ApplicationUserStore>();
         services.AddSingleton<CatalogueCache>();
         services.AddScoped<IMenuRepository, MenuRepository>();
         services.AddScoped<MenuService>();

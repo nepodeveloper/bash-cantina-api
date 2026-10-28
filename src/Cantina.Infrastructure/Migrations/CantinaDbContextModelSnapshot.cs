@@ -65,7 +65,7 @@ namespace Cantina.Infrastructure.Migrations
                         {
                             t.HasCheckConstraint("CK_MenuItems_Description", "length(btrim(\"Description\")) > 0");
 
-                            t.HasCheckConstraint("CK_MenuItems_ImageUrl", "\"ImageUrl\" LIKE 'https://%'");
+                            t.HasCheckConstraint("CK_MenuItems_ImageUrl", "\"ImageUrl\" ILIKE 'https://%'");
 
                             t.HasCheckConstraint("CK_MenuItems_Kind", "\"Kind\" IN (1, 2)");
 
@@ -316,6 +316,7 @@ namespace Cantina.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("NormalizedEmail")
+                        .IsUnique()
                         .HasDatabaseName("EmailIndex");
 
                     b.HasIndex("NormalizedUserName")

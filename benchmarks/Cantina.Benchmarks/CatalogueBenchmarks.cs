@@ -10,7 +10,7 @@ namespace Cantina.Benchmarks;
 [MemoryDiagnoser]
 public class CatalogueBenchmarks
 {
-    private const int WarmRequestsPerBatch = 10_000;
+    private const int WarmRequestsPerBatch = 50_000;
     private static readonly Guid StoreId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
     private static readonly CatalogueQuery Query = new(
         Search: "benchmark", Kind: MenuItemKind.Dish, MinPrice: 20, MaxPrice: 80);
@@ -48,8 +48,8 @@ public class CatalogueBenchmarks
             createSchema.CommandText = $"""CREATE SCHEMA "{schema}" """;
             await createSchema.ExecuteNonQueryAsync();
             schemaCreated = true;
-            // Model-generated DDL creates the real production indexes without touching any existing schema.
-            await db.Database.ExecuteSqlRawAsync(db.Database.GenerateCreateScript());
+            // SearchPath confines both migration history and application tables to this run's schema.
+            await db.Database.MigrateAsync();
             db.Stores.Add(new Store { Id = StoreId, Slug = "benchmark", Name = "Benchmark store" });
             db.Users.AddRange(
                 new ApplicationUser { Id = "benchmark-customer-0", UserName = "benchmark-customer-0" },
@@ -76,7 +76,7 @@ public class CatalogueBenchmarks
                 });
             }
             await db.SaveChangesAsync();
-            await db.Database.ExecuteSqlRawAsync("ANALYZE");
+            await db.Database.ExecuteSqlRawAsync("""ANALYZE "MenuItems"; ANALYZE "Ratings";""");
 
             var baseline = await TrackedFullMaterialization();
             var optimized = await NoTrackingPagedProjection();

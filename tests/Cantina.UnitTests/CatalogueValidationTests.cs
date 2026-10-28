@@ -13,6 +13,7 @@ public sealed class CatalogueValidationTests
     {
         CatalogueValidation.Validate(ValidItem);
         CatalogueValidation.Validate(ValidItem with { Kind = MenuItemKind.Drink, Price = 0 });
+        CatalogueValidation.Validate(ValidItem with { ImageUrl = "HTTPS://example.com/image.jpg" });
     }
 
     [Fact]

@@ -119,8 +119,7 @@ public sealed class CatalogueTests(ApiFixture fixture)
         admin.DefaultRequestHeaders.Add("X-Correlation-ID", correlation);
         var response = await admin.PostAsJsonAsync(ApiFixture.Menu(ApiFixture.Bash),
             new { kind = 99, name = "", description = "", price = -1, imageUrl = "http://insecure.example.com/image" });
-        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
-        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var problem = await AssertProblemAsync(response, HttpStatusCode.BadRequest);
         Assert.True(problem.TryGetProperty("errors", out var errors));
         Assert.True(errors.EnumerateObject().Count() >= 4);
         Assert.True(response.Headers.TryGetValues("X-Correlation-ID", out var values));
@@ -254,12 +253,53 @@ public sealed class CatalogueTests(ApiFixture fixture)
         Assert.Empty((await admin.GetFromJsonAsync<Page<MenuItemDto>>(query))!.Items);
     }
 
-    private static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode expected)
+    [Fact]
+    public async Task Cached_pages_are_store_separated_even_for_identical_query_and_item_names()
+    {
+        using var admin = await fixture.StaffAsync("Admin");
+        var name = $"Shared-{Guid.NewGuid():N}";
+        var bash = await ApiFixture.CreateItemAsync(admin, ApiFixture.Bash, ApiFixture.Input(name, price: 12m));
+        var sportscene = await ApiFixture.CreateItemAsync(admin, ApiFixture.Sportscene, ApiFixture.Input(name, price: 34m));
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var bashPage = (await admin.GetFromJsonAsync<Page<MenuItemDto>>(ApiFixture.Menu(ApiFixture.Bash) + $"?search={name}"))!;
+            var sportscenePage = (await admin.GetFromJsonAsync<Page<MenuItemDto>>(ApiFixture.Menu(ApiFixture.Sportscene) + $"?search={name}"))!;
+            Assert.Equal(bash, Assert.Single(bashPage.Items));
+            Assert.Equal(sportscene, Assert.Single(sportscenePage.Items));
+        }
+        await ApiFixture.ExpectAsync(await admin.PutAsJsonAsync($"{ApiFixture.Menu(ApiFixture.Bash)}/{bash.Id}",
+            ApiFixture.Input(name, price: 56m)), HttpStatusCode.OK);
+        Assert.Equal(56m, Assert.Single((await admin.GetFromJsonAsync<Page<MenuItemDto>>(
+            ApiFixture.Menu(ApiFixture.Bash) + $"?search={name}"))!.Items).Price);
+        Assert.Equal(sportscene, Assert.Single((await admin.GetFromJsonAsync<Page<MenuItemDto>>(
+            ApiFixture.Menu(ApiFixture.Sportscene) + $"?search={name}"))!.Items));
+    }
+
+    [Fact]
+    public async Task Unknown_store_is_not_an_empty_catalogue_and_unknown_item_returns_not_found()
+    {
+        using var client = fixture.CreateClient();
+        var missingStore = Guid.NewGuid();
+        var missingItem = Guid.NewGuid();
+        var empty = await client.GetAsync(ApiFixture.Menu(ApiFixture.Bash) + $"?search={Guid.NewGuid():N}");
+        await ApiFixture.ExpectAsync(empty, HttpStatusCode.OK);
+        Assert.Empty((await empty.Content.ReadFromJsonAsync<Page<MenuItemDto>>())!.Items);
+        await AssertProblemAsync(await client.GetAsync(ApiFixture.Menu(missingStore)), HttpStatusCode.NotFound);
+        await AssertProblemAsync(await client.GetAsync($"{ApiFixture.Menu(ApiFixture.Bash)}/{missingItem}"), HttpStatusCode.NotFound);
+        await AssertProblemAsync(await client.GetAsync($"{ApiFixture.Menu(missingStore)}/{missingItem}"), HttpStatusCode.NotFound);
+        using var admin = await fixture.StaffAsync("Admin");
+        await AssertProblemAsync(await admin.PostAsJsonAsync(ApiFixture.Menu(missingStore), ApiFixture.Input()), HttpStatusCode.NotFound);
+        await AssertProblemAsync(await admin.PutAsJsonAsync($"{ApiFixture.Menu(ApiFixture.Bash)}/{missingItem}", ApiFixture.Input()), HttpStatusCode.NotFound);
+        await AssertProblemAsync(await admin.DeleteAsync($"{ApiFixture.Menu(ApiFixture.Bash)}/{missingItem}"), HttpStatusCode.NotFound);
+    }
+
+    private static async Task<JsonElement> AssertProblemAsync(HttpResponseMessage response, HttpStatusCode expected)
     {
         await ApiFixture.ExpectAsync(response, expected);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal((int)expected, body.GetProperty("status").GetInt32());
         Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("title").GetString()));
+        return body;
     }
 }

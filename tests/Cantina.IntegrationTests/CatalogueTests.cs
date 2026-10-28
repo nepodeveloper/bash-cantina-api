@@ -96,6 +96,22 @@ public sealed class CatalogueTests(ApiFixture fixture)
         await ApiFixture.ExpectAsync(await admin.GetAsync(url), HttpStatusCode.NotFound);
     }
 
+    [Theory]
+    [InlineData(MenuItemKind.Dish)]
+    [InlineData(MenuItemKind.Drink)]
+    public async Task Https_image_scheme_is_case_insensitive_during_create_and_update(MenuItemKind kind)
+    {
+        using var admin = await fixture.StaffAsync("Admin");
+        var input = ApiFixture.Input(kind: kind) with { ImageUrl = "HTTPS://images.example.com/uppercase-create.jpg" };
+        var created = await ApiFixture.CreateItemAsync(admin, ApiFixture.Bash, input);
+        Assert.Equal(input.ImageUrl, created.ImageUrl);
+        var url = $"{ApiFixture.Menu(ApiFixture.Bash)}/{created.Id}";
+        var changed = input with { ImageUrl = "HTTPS://images.example.com/uppercase-update.jpg" };
+        await ApiFixture.ExpectAsync(await admin.PutAsJsonAsync(url, changed), HttpStatusCode.OK);
+        Assert.Equal(changed.ImageUrl, (await admin.GetFromJsonAsync<MenuItemDto>(url))!.ImageUrl);
+        await ApiFixture.ExpectAsync(await admin.DeleteAsync(url), HttpStatusCode.NoContent);
+    }
+
     [Fact]
     public async Task Cross_store_item_identifiers_cannot_read_edit_delete_or_rate_other_store_items()
     {

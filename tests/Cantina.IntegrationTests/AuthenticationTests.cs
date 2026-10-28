@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Cantina.Infrastructure;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -85,6 +86,51 @@ public sealed class AuthenticationTests(ApiFixture fixture)
         await using var scope = fixture.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<CantinaDbContext>();
         Assert.Single(db.Users.Where(user => user.Email == email));
+    }
+
+    [Theory]
+    [InlineData("abcdefghijklmnop")]
+    [InlineData("lowercaseonly123!")]
+    [InlineData("UPPERCASEONLY123!")]
+    [InlineData("MissingDigitsOnly!")]
+    [InlineData("MissingSymbolsOnly123")]
+    public async Task Registration_rejects_each_missing_password_category_with_actionable_problem_details(string password)
+    {
+        var email = $"password-policy-{Guid.NewGuid():N}@example.com";
+        using var client = fixture.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password });
+        await ApiFixture.ExpectAsync(response, HttpStatusCode.BadRequest);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(400, problem.GetProperty("status").GetInt32());
+        Assert.NotEmpty(problem.GetProperty("errors").GetProperty("password").EnumerateArray());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        Assert.Null(await users.FindByEmailAsync(email));
+    }
+
+    [Fact]
+    public async Task Concurrent_duplicate_registration_is_enumeration_safe_and_creates_only_one_customer()
+    {
+        var email = $"concurrent-{Guid.NewGuid():N}@example.com";
+        using var client = fixture.CreateClient();
+        var responses = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ =>
+            client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = ApiFixture.Password })));
+        var bodies = new List<string>();
+        foreach (var response in responses)
+        {
+            await ApiFixture.ExpectAsync(response, HttpStatusCode.Accepted);
+            bodies.Add(await response.Content.ReadAsStringAsync());
+        }
+        Assert.Single(bodies.Distinct());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<CantinaDbContext>();
+        var user = await db.Users.SingleAsync(user => user.Email == email);
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        Assert.Equal("Customer", Assert.Single(await users.GetRolesAsync(user)));
+        var tokens = await fixture.LoginAsync(email);
+        using var authenticated = fixture.CreateClient(tokens.AccessToken);
+        await ApiFixture.ExpectAsync(await authenticated.GetAsync("/api/v1/auth/me"), HttpStatusCode.OK);
     }
 
     [Fact]

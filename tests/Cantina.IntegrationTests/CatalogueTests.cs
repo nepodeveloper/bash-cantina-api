@@ -101,15 +101,15 @@ public sealed class CatalogueTests(ApiFixture fixture)
     [InlineData(MenuItemKind.Drink)]
     public async Task Https_image_scheme_is_case_insensitive_during_create_and_update(MenuItemKind kind)
     {
-        using var admin = await fixture.StaffAsync("Admin");
+        using var manager = await fixture.StaffAsync("StoreManager", ApiFixture.Bash);
         var input = ApiFixture.Input(kind: kind) with { ImageUrl = "HTTPS://images.example.com/uppercase-create.jpg" };
-        var created = await ApiFixture.CreateItemAsync(admin, ApiFixture.Bash, input);
+        var created = await ApiFixture.CreateItemAsync(manager, ApiFixture.Bash, input);
         Assert.Equal(input.ImageUrl, created.ImageUrl);
         var url = $"{ApiFixture.Menu(ApiFixture.Bash)}/{created.Id}";
         var changed = input with { ImageUrl = "HTTPS://images.example.com/uppercase-update.jpg" };
-        await ApiFixture.ExpectAsync(await admin.PutAsJsonAsync(url, changed), HttpStatusCode.OK);
-        Assert.Equal(changed.ImageUrl, (await admin.GetFromJsonAsync<MenuItemDto>(url))!.ImageUrl);
-        await ApiFixture.ExpectAsync(await admin.DeleteAsync(url), HttpStatusCode.NoContent);
+        await ApiFixture.ExpectAsync(await manager.PutAsJsonAsync(url, changed), HttpStatusCode.OK);
+        Assert.Equal(changed.ImageUrl, (await manager.GetFromJsonAsync<MenuItemDto>(url))!.ImageUrl);
+        await ApiFixture.ExpectAsync(await manager.DeleteAsync(url), HttpStatusCode.NoContent);
     }
 
     [Fact]

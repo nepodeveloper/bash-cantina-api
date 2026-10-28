@@ -7,6 +7,7 @@ public sealed class Store
     public Guid Id { get; set; }
     public string Slug { get; set; } = "";
     public string Name { get; set; } = "";
+    public bool IsActive { get; set; } = true;
 }
 
 public sealed class MenuItem
@@ -18,6 +19,8 @@ public sealed class MenuItem
     public string Description { get; set; } = "";
     public decimal Price { get; set; }
     public string ImageUrl { get; set; } = "";
+    public DateTimeOffset CreatedAtUtc { get; set; }
+    public DateTimeOffset UpdatedAtUtc { get; set; }
     public ICollection<Rating> Ratings { get; set; } = new List<Rating>();
 }
 
@@ -27,6 +30,9 @@ public sealed class Rating
     public Guid MenuItemId { get; set; }
     public string CustomerId { get; set; } = "";
     public int Score { get; set; }
+    public string? ReviewText { get; set; }
+    public DateTimeOffset CreatedAtUtc { get; set; }
+    public DateTimeOffset UpdatedAtUtc { get; set; }
 }
 
 public sealed class StoreMembership

@@ -28,6 +28,9 @@ namespace Cantina.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasMaxLength(2000)
@@ -52,6 +55,15 @@ namespace Cantina.Infrastructure.Migrations
 
                     b.Property<Guid>("StoreId")
                         .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.HasKey("Id");
 
@@ -78,102 +90,122 @@ namespace Cantina.Infrastructure.Migrations
                         new
                         {
                             Id = new Guid("a1111111-1111-1111-1111-111111111101"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Grilled beef burger with fresh salad.",
                             ImageUrl = "https://images.example.com/menu/a1111111-1111-1111-1111-111111111101.jpg",
                             Kind = 1,
                             Name = "Bash Burger",
                             Price = 89.90m,
-                            StoreId = new Guid("11111111-1111-1111-1111-111111111111")
+                            StoreId = new Guid("11111111-1111-1111-1111-111111111111"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         },
                         new
                         {
                             Id = new Guid("a1111111-1111-1111-1111-111111111102"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Seasonal vegetables, grains and lemon dressing.",
                             ImageUrl = "https://images.example.com/menu/a1111111-1111-1111-1111-111111111102.jpg",
                             Kind = 1,
                             Name = "Garden Bowl",
                             Price = 69.50m,
-                            StoreId = new Guid("11111111-1111-1111-1111-111111111111")
+                            StoreId = new Guid("11111111-1111-1111-1111-111111111111"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         },
                         new
                         {
                             Id = new Guid("a1111111-1111-1111-1111-111111111103"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Grilled chicken, greens and herb sauce.",
                             ImageUrl = "https://images.example.com/menu/a1111111-1111-1111-1111-111111111103.jpg",
                             Kind = 1,
                             Name = "Chicken Wrap",
                             Price = 74.00m,
-                            StoreId = new Guid("11111111-1111-1111-1111-111111111111")
+                            StoreId = new Guid("11111111-1111-1111-1111-111111111111"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         },
                         new
                         {
                             Id = new Guid("a1111111-1111-1111-1111-111111111104"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Chilled coffee served over ice.",
                             ImageUrl = "https://images.example.com/menu/a1111111-1111-1111-1111-111111111104.jpg",
                             Kind = 2,
                             Name = "Iced Coffee",
                             Price = 32.00m,
-                            StoreId = new Guid("11111111-1111-1111-1111-111111111111")
+                            StoreId = new Guid("11111111-1111-1111-1111-111111111111"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         },
                         new
                         {
                             Id = new Guid("a1111111-1111-1111-1111-111111111105"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Blended berries and yoghurt.",
                             ImageUrl = "https://images.example.com/menu/a1111111-1111-1111-1111-111111111105.jpg",
                             Kind = 2,
                             Name = "Berry Smoothie",
                             Price = 39.90m,
-                            StoreId = new Guid("11111111-1111-1111-1111-111111111111")
+                            StoreId = new Guid("11111111-1111-1111-1111-111111111111"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         },
                         new
                         {
                             Id = new Guid("b2222222-2222-2222-2222-222222222201"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Brown rice, chicken and roasted vegetables.",
                             ImageUrl = "https://images.example.com/menu/b2222222-2222-2222-2222-222222222201.jpg",
                             Kind = 1,
                             Name = "Power Bowl",
                             Price = 84.50m,
-                            StoreId = new Guid("22222222-2222-2222-2222-222222222222")
+                            StoreId = new Guid("22222222-2222-2222-2222-222222222222"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         },
                         new
                         {
                             Id = new Guid("b2222222-2222-2222-2222-222222222202"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Roasted vegetables and hummus in a warm pita.",
                             ImageUrl = "https://images.example.com/menu/b2222222-2222-2222-2222-222222222202.jpg",
                             Kind = 1,
                             Name = "Veggie Pita",
                             Price = 64.00m,
-                            StoreId = new Guid("22222222-2222-2222-2222-222222222222")
+                            StoreId = new Guid("22222222-2222-2222-2222-222222222222"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         },
                         new
                         {
                             Id = new Guid("b2222222-2222-2222-2222-222222222203"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Crisp greens with grilled chicken.",
                             ImageUrl = "https://images.example.com/menu/b2222222-2222-2222-2222-222222222203.jpg",
                             Kind = 1,
                             Name = "Chicken Salad",
                             Price = 79.90m,
-                            StoreId = new Guid("22222222-2222-2222-2222-222222222222")
+                            StoreId = new Guid("22222222-2222-2222-2222-222222222222"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         },
                         new
                         {
                             Id = new Guid("b2222222-2222-2222-2222-222222222204"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Fresh citrus juice with sparkling water.",
                             ImageUrl = "https://images.example.com/menu/b2222222-2222-2222-2222-222222222204.jpg",
                             Kind = 2,
                             Name = "Citrus Cooler",
                             Price = 29.00m,
-                            StoreId = new Guid("22222222-2222-2222-2222-222222222222")
+                            StoreId = new Guid("22222222-2222-2222-2222-222222222222"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         },
                         new
                         {
                             Id = new Guid("b2222222-2222-2222-2222-222222222205"),
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Banana, milk and a touch of cinnamon.",
                             ImageUrl = "https://images.example.com/menu/b2222222-2222-2222-2222-222222222205.jpg",
                             Kind = 2,
                             Name = "Banana Shake",
                             Price = 38.00m,
-                            StoreId = new Guid("22222222-2222-2222-2222-222222222222")
+                            StoreId = new Guid("22222222-2222-2222-2222-222222222222"),
+                            UpdatedAtUtc = new DateTimeOffset(new DateTime(2026, 10, 28, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         });
                 });
 
@@ -189,12 +221,24 @@ namespace Cantina.Infrastructure.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("character varying(450)");
 
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReviewText")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.Property<int>("Score")
                         .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.HasKey("StoreId", "MenuItemId", "CustomerId");
 
                     b.HasIndex("CustomerId");
+
+                    b.HasIndex("StoreId", "MenuItemId", "UpdatedAtUtc");
 
                     b.ToTable("Ratings", null, t =>
                         {
@@ -207,6 +251,11 @@ namespace Cantina.Infrastructure.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -234,12 +283,14 @@ namespace Cantina.Infrastructure.Migrations
                         new
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111111"),
+                            IsActive = true,
                             Name = "Bash",
                             Slug = "bash"
                         },
                         new
                         {
                             Id = new Guid("22222222-2222-2222-2222-222222222222"),
+                            IsActive = true,
                             Name = "Sportscene",
                             Slug = "sportscene"
                         });
@@ -286,6 +337,11 @@ namespace Cantina.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("LockoutEnd")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
                     b.Property<string>("NormalizedEmail")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
@@ -323,7 +379,48 @@ namespace Cantina.Infrastructure.Migrations
                         .IsUnique()
                         .HasDatabaseName("UserNameIndex");
 
-                    b.ToTable("AspNetUsers", (string)null);
+                    b.ToTable("AspNetUsers", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_AspNetUsers_Name", "length(btrim(\"Name\")) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("Cantina.Infrastructure.IdempotencyRecord", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("Key")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Body")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Location")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<int>("StatusCode")
+                        .HasColumnType("integer");
+
+                    b.HasKey("UserId", "Key");
+
+                    b.HasIndex("UserId", "CreatedAtUtc");
+
+                    b.ToTable("IdempotencyRecords", (string)null);
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
@@ -491,6 +588,15 @@ namespace Cantina.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("Cantina.Infrastructure.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Cantina.Infrastructure.IdempotencyRecord", b =>
+                {
                     b.HasOne("Cantina.Infrastructure.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")

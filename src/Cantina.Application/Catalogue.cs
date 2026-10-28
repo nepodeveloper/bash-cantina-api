@@ -6,21 +6,25 @@ public sealed record MenuItemInput(MenuItemKind Kind, string Name, string Descri
 public sealed record MenuItemDto(Guid Id, Guid StoreId, MenuItemKind Kind, string Name,
     string Description, decimal Price, string ImageUrl, double? AverageRating, int RatingCount);
 public sealed record StoreDto(Guid Id, string Slug, string Name);
+public sealed record RatingDto(int Score, string? ReviewText, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc);
 public sealed record Page<T>(IReadOnlyList<T> Items, int PageNumber, int PageSize, int TotalCount);
 public sealed record CatalogueQuery(string? Search = null, MenuItemKind? Kind = null,
     decimal? MinPrice = null, decimal? MaxPrice = null, string Sort = "name", int Page = 1, int PageSize = 20);
+public sealed record RatingsQuery(int Page = 1, int PageSize = 20);
+public sealed record RatingInput(int Score, string? ReviewText = null);
 
 public interface IMenuRepository
 {
     Task<IReadOnlyList<StoreDto>> GetStoresAsync(CancellationToken ct);
-    Task<bool> StoreExistsAsync(Guid storeId, CancellationToken ct);
+    Task<Guid?> ResolveStoreAsync(string slug, CancellationToken ct);
     Task<bool> HasMembershipAsync(Guid storeId, string userId, CancellationToken ct);
     Task<Page<MenuItemDto>> SearchAsync(Guid storeId, CatalogueQuery query, CancellationToken ct);
     Task<MenuItemDto?> GetAsync(Guid storeId, Guid itemId, CancellationToken ct);
+    Task<Page<RatingDto>?> GetRatingsAsync(Guid storeId, Guid itemId, RatingsQuery query, CancellationToken ct);
     Task<MenuItemDto> CreateAsync(Guid storeId, MenuItemInput input, CancellationToken ct);
     Task<MenuItemDto?> UpdateAsync(Guid storeId, Guid itemId, MenuItemInput input, CancellationToken ct);
     Task<bool> DeleteAsync(Guid storeId, Guid itemId, CancellationToken ct);
-    Task<bool> RateAsync(Guid storeId, Guid itemId, string customerId, int score, CancellationToken ct);
+    Task<bool> RateAsync(Guid storeId, Guid itemId, string customerId, RatingInput input, CancellationToken ct);
 }
 
 public sealed class RequestValidationException(Dictionary<string, string[]> errors) : Exception("Request validation failed.")
@@ -60,10 +64,22 @@ public static class CatalogueValidation
         ThrowIfInvalid(errors);
     }
 
-    public static void ValidateScore(int score)
+    public static RatingInput Validate(RatingInput input)
     {
-        if (score is < 1 or > 5)
-            throw new RequestValidationException(new() { ["score"] = ["Score must be between 1 and 5."] });
+        var errors = new Dictionary<string, string[]>();
+        if (input.Score is < 1 or > 5) errors["score"] = ["Score must be between 1 and 5."];
+        var review = input.ReviewText?.Trim();
+        if (review?.Length > 1000) errors["reviewText"] = ["Review text must be at most 1000 characters."];
+        ThrowIfInvalid(errors);
+        return input with { ReviewText = string.IsNullOrEmpty(review) ? null : review };
+    }
+
+    public static void Validate(RatingsQuery query)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (query.Page < 1 || query.Page > 1000000) errors["page"] = ["Page must be between 1 and 1000000."];
+        if (query.PageSize is < 1 or > 100) errors["pageSize"] = ["Page size must be between 1 and 100."];
+        ThrowIfInvalid(errors);
     }
 
     private static void ThrowIfInvalid(Dictionary<string, string[]> errors)
@@ -92,9 +108,12 @@ public sealed class MenuService(IMenuRepository repository)
         return repository.UpdateAsync(storeId, itemId, input with { Name = input.Name.Trim(), Description = input.Description.Trim() }, ct);
     }
 
-    public Task<bool> RateAsync(Guid storeId, Guid itemId, string customerId, int score, CancellationToken ct)
+    public Task<bool> RateAsync(Guid storeId, Guid itemId, string customerId, RatingInput input, CancellationToken ct) =>
+        repository.RateAsync(storeId, itemId, customerId, CatalogueValidation.Validate(input), ct);
+
+    public Task<Page<RatingDto>?> GetRatingsAsync(Guid storeId, Guid itemId, RatingsQuery query, CancellationToken ct)
     {
-        CatalogueValidation.ValidateScore(score);
-        return repository.RateAsync(storeId, itemId, customerId, score, ct);
+        CatalogueValidation.Validate(query);
+        return repository.GetRatingsAsync(storeId, itemId, query, ct);
     }
 }

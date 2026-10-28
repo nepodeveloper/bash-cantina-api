@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Cantina.Application;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 
 namespace Cantina.Api;
 
@@ -34,9 +35,12 @@ public sealed class ApiErrors(RequestDelegate next, ILogger<ApiErrors> logger)
                     extensions: new Dictionary<string, object?> { ["correlationId"] = context.TraceIdentifier }),
                 BadHttpRequestException bad => Problem(context, bad.StatusCode),
                 JsonException => Problem(context, 400),
+                DbUpdateConcurrencyException => Problem(context, 409,
+                    "The record changed since it was read. Re-read it and retry."),
                 _ => Problem(context, 500)
             };
-            if (exception is not (RequestValidationException or BadHttpRequestException or JsonException))
+            if (exception is not (RequestValidationException or BadHttpRequestException or JsonException
+                or DbUpdateConcurrencyException))
                 logger.LogError("Request failed with exception type {ExceptionType}", exception.GetType().Name);
             await result.ExecuteAsync(context);
         }

@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Cantina.Benchmarks/Cantina.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Cantina.Api/Cantina.Api.csproj" />
+    <Project Path="src/Cantina.Application/Cantina.Application.csproj" />
+    <Project Path="src/Cantina.Domain/Cantina.Domain.csproj" />
+    <Project Path="src/Cantina.Infrastructure/Cantina.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Cantina.IntegrationTests/Cantina.IntegrationTests.csproj" />
+    <Project Path="tests/Cantina.UnitTests/Cantina.UnitTests.csproj" />
+  </Folder>
+</Solution>

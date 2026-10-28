@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: cantina
+      POSTGRES_USER: cantina
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cantina -d cantina"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  api:
+    build:
+      context: .
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=cantina;Username=cantina;****** POSTGRES_PASSWORD in .env}
+      Database__ApplyMigrations: "true"
+      DataProtection__KeysPath: /var/cantina/keys
+      BootstrapAdmin__Email: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BootstrapAdmin__Password: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+    ports:
+      - "127.0.0.1:5080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - data-protection-keys:/var/cantina/keys
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  data-protection-keys:

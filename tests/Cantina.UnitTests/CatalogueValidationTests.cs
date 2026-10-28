@@ -87,10 +87,43 @@ public sealed class CatalogueValidationTests
     [InlineData(6)]
     [InlineData(int.MaxValue)]
     public void RatingsAreBetweenOneAndFive(int score) =>
-        Assert.Throws<RequestValidationException>(() => CatalogueValidation.ValidateScore(score));
+        Assert.Throws<RequestValidationException>(() => CatalogueValidation.Validate(new RatingInput(score)));
 
     [Theory]
     [InlineData(1)]
     [InlineData(5)]
-    public void RatingBoundariesAreAccepted(int score) => CatalogueValidation.ValidateScore(score);
+    public void RatingBoundariesAreAccepted(int score) => CatalogueValidation.Validate(new RatingInput(score));
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData("  Tasty.  ", "Tasty.")]
+    public void ReviewTextIsTrimmedAndBlankBecomesNull(string? supplied, string? expected) =>
+        Assert.Equal(expected, CatalogueValidation.Validate(new RatingInput(3, supplied)).ReviewText);
+
+    [Fact]
+    public void ReviewTextIsBoundedToTheColumnLength()
+    {
+        CatalogueValidation.Validate(new RatingInput(3, new string('a', 1000)));
+        var exception = Assert.Throws<RequestValidationException>(() =>
+            CatalogueValidation.Validate(new RatingInput(3, new string('a', 1001))));
+        Assert.Contains("reviewText", exception.Errors.Keys);
+    }
+
+    [Fact]
+    public void InvalidRatingReturnsEveryFieldError()
+    {
+        var exception = Assert.Throws<RequestValidationException>(() =>
+            CatalogueValidation.Validate(new RatingInput(9, new string('a', 1001))));
+        Assert.Equal(["reviewText", "score"], exception.Errors.Keys.Order());
+    }
+
+    [Theory]
+    [InlineData(0, 20)]
+    [InlineData(1, 0)]
+    [InlineData(1, 101)]
+    [InlineData(1000001, 20)]
+    public void InvalidRatingPagingIsRejected(int page, int pageSize) =>
+        Assert.Throws<RequestValidationException>(() => CatalogueValidation.Validate(new RatingsQuery(page, pageSize)));
 }

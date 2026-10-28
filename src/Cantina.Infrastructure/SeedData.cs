@@ -10,6 +10,9 @@ public static class SeedData
     public static readonly Guid BashStoreId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     public static readonly Guid SportsceneStoreId = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
+    // Seeded rows need a constant timestamp so the migration snapshot stays reproducible.
+    public static readonly DateTimeOffset SeedTimestamp = new(2026, 10, 28, 0, 0, 0, TimeSpan.Zero);
+
     public static async Task InitializeAsync(IServiceProvider services, CancellationToken cancellationToken = default)
     {
         await using var scope = services.CreateAsyncScope();
@@ -33,13 +36,16 @@ public static class SeedData
         {
             var users = provider.GetRequiredService<UserManager<ApplicationUser>>();
             if (await users.FindByEmailAsync(email) is null && await users.FindByNameAsync(email) is null)
-            {
-                await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-                var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true };
-                EnsureSucceeded(await users.CreateAsync(user, password!), "creating bootstrap administrator");
-                EnsureSucceeded(await users.AddToRoleAsync(user, "Admin"), "assigning bootstrap administrator role");
-                await transaction.CommitAsync(cancellationToken);
-            }
+                // The retrying execution strategy owns the transaction so a transient failure replays the whole unit.
+                await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                {
+                    db.ChangeTracker.Clear();
+                    await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+                    var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true, Name = "Bootstrap administrator" };
+                    EnsureSucceeded(await users.CreateAsync(user, password!), "creating bootstrap administrator");
+                    EnsureSucceeded(await users.AddToRoleAsync(user, "Admin"), "assigning bootstrap administrator role");
+                    await transaction.CommitAsync(cancellationToken);
+                });
         }
     }
 

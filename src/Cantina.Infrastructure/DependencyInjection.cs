@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Cantina.Infrastructure;
 
@@ -16,18 +17,30 @@ public static class DependencyInjection
             throw new InvalidOperationException("ConnectionStrings:DefaultConnection is required.");
         SeedData.ValidateBootstrapConfiguration(configuration);
 
-        services.AddDbContext<CantinaDbContext>(options => options.UseNpgsql(connectionString));
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddDbContext<CantinaDbContext>(options => options.UseNpgsql(connectionString,
+            // Transient network and failover errors are retried in place before the caller ever sees them.
+            npgsql => npgsql.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null)));
         services.AddIdentityApiEndpoints<ApplicationUser>(options =>
         {
             options.Password.RequiredLength = 12;
+            options.Password.RequireUppercase = true;
+            options.Password.RequireLowercase = true;
+            options.Password.RequireDigit = true;
+            options.Password.RequireNonAlphanumeric = true;
             options.Lockout.MaxFailedAccessAttempts = 5;
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
             options.User.RequireUniqueEmail = true;
         }).AddRoles<IdentityRole>().AddEntityFrameworkStores<CantinaDbContext>()
             .AddUserStore<ApplicationUserStore>();
+        services.AddHealthChecks().AddDbContextCheck<CantinaDbContext>("database", tags: ["ready"]);
         services.AddSingleton<CatalogueCache>();
+        services.AddScoped<CustomerProvisioner>();
         services.AddScoped<IMenuRepository, MenuRepository>();
+        services.AddScoped<IReviewDashboard, ReviewDashboard>();
+        services.AddScoped<IIdempotencyStore, IdempotencyStore>();
         services.AddScoped<MenuService>();
+        services.AddScoped<ReviewService>();
         return services;
     }
 }

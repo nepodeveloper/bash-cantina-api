@@ -52,8 +52,8 @@ public class CatalogueBenchmarks
             await db.Database.MigrateAsync();
             db.Stores.Add(new Store { Id = StoreId, Slug = "benchmark", Name = "Benchmark store" });
             db.Users.AddRange(
-                new ApplicationUser { Id = "benchmark-customer-0", UserName = "benchmark-customer-0" },
-                new ApplicationUser { Id = "benchmark-customer-1", UserName = "benchmark-customer-1" });
+                new ApplicationUser { Id = "benchmark-customer-0", UserName = "benchmark-customer-0", Name = "Benchmark customer 0" },
+                new ApplicationUser { Id = "benchmark-customer-1", UserName = "benchmark-customer-1", Name = "Benchmark customer 1" });
             for (var index = 0; index < ItemCount; index++)
             {
                 var id = Guid.Parse($"dddddddd-dddd-dddd-dddd-{index:x12}");
@@ -66,12 +66,16 @@ public class CatalogueBenchmarks
                     Description = $"Deterministic benchmark menu item {index:D5}.",
                     Price = 10 + index % 100,
                     ImageUrl = "https://images.example.com/benchmark.jpg",
+                    CreatedAtUtc = SeedData.SeedTimestamp,
+                    UpdatedAtUtc = SeedData.SeedTimestamp,
                     Ratings = Enumerable.Range(0, index % 3).Select(customer => new Rating
                     {
                         StoreId = StoreId,
                         MenuItemId = id,
                         CustomerId = $"benchmark-customer-{customer}",
-                        Score = 1 + (index + customer) % 5
+                        Score = 1 + (index + customer) % 5,
+                        CreatedAtUtc = SeedData.SeedTimestamp,
+                        UpdatedAtUtc = SeedData.SeedTimestamp
                     }).ToList()
                 });
             }
@@ -120,7 +124,7 @@ public class CatalogueBenchmarks
         // Force a real repository miss, including the small invalidation cost in the measurement.
         coldCache.Invalidate(StoreId);
         await using var db = CreateContext();
-        IMenuRepository repository = new MenuRepository(db, coldCache);
+        IMenuRepository repository = new MenuRepository(db, coldCache, TimeProvider.System);
         var result = await repository.SearchAsync(StoreId, Query, CancellationToken.None);
         if (db.ChangeTracker.Entries().Any())
             throw new InvalidOperationException("The optimized read unexpectedly tracked entities.");
@@ -143,7 +147,7 @@ public class CatalogueBenchmarks
     private async Task<Page<MenuItemDto>> ReadWarmCache()
     {
         await using var db = CreateContext();
-        IMenuRepository repository = new MenuRepository(db, warmCache);
+        IMenuRepository repository = new MenuRepository(db, warmCache, TimeProvider.System);
         return await repository.SearchAsync(StoreId, Query, CancellationToken.None);
     }
 

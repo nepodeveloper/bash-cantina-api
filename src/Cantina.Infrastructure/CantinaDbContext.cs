@@ -5,7 +5,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Cantina.Infrastructure;
 
-public sealed class ApplicationUser : IdentityUser;
+public sealed class ApplicationUser : IdentityUser
+{
+    public string Name { get; set; } = "";
+}
 
 public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
     : IdentityDbContext<ApplicationUser>(options)
@@ -14,11 +17,18 @@ public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
     public DbSet<StoreMembership> StoreMemberships => Set<StoreMembership>();
     public DbSet<MenuItem> MenuItems => Set<MenuItem>();
     public DbSet<Rating> Ratings => Set<Rating>();
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
-        builder.Entity<ApplicationUser>().HasIndex(x => x.NormalizedEmail).HasDatabaseName("EmailIndex").IsUnique();
+        builder.Entity<ApplicationUser>(entity =>
+        {
+            entity.HasIndex(x => x.NormalizedEmail).HasDatabaseName("EmailIndex").IsUnique();
+            entity.Property(x => x.Name).HasMaxLength(120).IsRequired();
+            entity.ToTable("AspNetUsers", table =>
+                table.HasCheckConstraint("CK_AspNetUsers_Name", """length(btrim("Name")) > 0"""));
+        });
 
         builder.Entity<Store>(entity =>
         {
@@ -30,10 +40,11 @@ public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Slug).HasMaxLength(80).IsRequired();
             entity.Property(x => x.Name).HasMaxLength(120).IsRequired();
+            entity.Property(x => x.IsActive).HasDefaultValue(true);
             entity.HasIndex(x => x.Slug).IsUnique();
             entity.HasData(
-                new Store { Id = SeedData.BashStoreId, Slug = "bash", Name = "Bash" },
-                new Store { Id = SeedData.SportsceneStoreId, Slug = "sportscene", Name = "Sportscene" });
+                new Store { Id = SeedData.BashStoreId, Slug = "bash", Name = "Bash", IsActive = true },
+                new Store { Id = SeedData.SportsceneStoreId, Slug = "sportscene", Name = "Sportscene", IsActive = true });
         });
 
         builder.Entity<StoreMembership>(entity =>
@@ -68,6 +79,8 @@ public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
             });
             entity.HasKey(x => x.Id);
             entity.HasAlternateKey(x => new { x.StoreId, x.Id });
+            // PostgreSQL's hidden xmin system column is the row version; it adds no physical column.
+            entity.Property<uint>("xmin").HasColumnName("xmin").ValueGeneratedOnAddOrUpdate().IsConcurrencyToken();
             entity.Property(x => x.Name).HasMaxLength(120).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(2000).IsRequired();
             entity.Property(x => x.ImageUrl).HasMaxLength(2048).IsRequired();
@@ -84,11 +97,25 @@ public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
                 table.HasCheckConstraint("CK_Ratings_Score", "\"Score\" BETWEEN 1 AND 5"));
             entity.HasKey(x => new { x.StoreId, x.MenuItemId, x.CustomerId });
             entity.Property(x => x.CustomerId).HasMaxLength(450);
+            entity.Property(x => x.ReviewText).HasMaxLength(1000);
+            entity.HasIndex(x => new { x.StoreId, x.MenuItemId, x.UpdatedAtUtc });
             entity.HasOne<MenuItem>().WithMany(x => x.Ratings)
                 .HasForeignKey(x => new { x.StoreId, x.MenuItemId })
                 .HasPrincipalKey(x => new { x.StoreId, x.Id })
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<IdempotencyRecord>(entity =>
+        {
+            entity.ToTable("IdempotencyRecords");
+            entity.HasKey(x => new { x.UserId, x.Key });
+            entity.Property(x => x.UserId).HasMaxLength(450);
+            entity.Property(x => x.Key).HasMaxLength(128);
+            entity.Property(x => x.Fingerprint).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Location).HasMaxLength(2048);
+            entity.HasIndex(x => new { x.UserId, x.CreatedAtUtc });
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 
@@ -97,6 +124,7 @@ public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
         {
             Id = Guid.Parse(id), StoreId = storeId, Kind = kind, Name = name,
             Description = description, Price = price,
-            ImageUrl = $"https://images.example.com/menu/{id}.jpg"
+            ImageUrl = $"https://images.example.com/menu/{id}.jpg",
+            CreatedAtUtc = SeedData.SeedTimestamp, UpdatedAtUtc = SeedData.SeedTimestamp
         };
 }

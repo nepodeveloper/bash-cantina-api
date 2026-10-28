@@ -20,24 +20,31 @@ public sealed class ApiCollection : ICollectionFixture<ApiFixture>;
 [CollectionDefinition("rate-limit")]
 public sealed class RateLimitCollection : ICollectionFixture<RateLimitFixture>;
 
+[CollectionDefinition("catalogue-rate-limit")]
+public sealed class CatalogueRateLimitCollection : ICollectionFixture<CatalogueRateLimitFixture>;
+
 public class ApiFixture : IAsyncLifetime
 {
     public const string Password = "Integration!Password123";
+    public const string BashSlug = "bash";
+    public const string SportsceneSlug = "sportscene";
     public static readonly Guid Bash = Guid.Parse("11111111-1111-1111-1111-111111111111");
     public static readonly Guid Sportscene = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private readonly PostgreSqlContainer database = new PostgreSqlBuilder("postgres:17-alpine").Build();
-    private readonly int permitLimit;
+    private readonly int authPermitLimit;
+    private readonly int cataloguePermitLimit;
     private TestApplication? application;
 
-    public ApiFixture() : this(1000) { }
-    protected ApiFixture(int permitLimit) => this.permitLimit = permitLimit;
+    public ApiFixture() : this(1000, 1000) { }
+    protected ApiFixture(int authPermitLimit, int cataloguePermitLimit) =>
+        (this.authPermitLimit, this.cataloguePermitLimit) = (authPermitLimit, cataloguePermitLimit);
 
     public IServiceProvider Services => application!.Services;
 
     public async Task InitializeAsync()
     {
         await database.StartAsync();
-        application = new TestApplication(database.GetConnectionString(), permitLimit);
+        application = new TestApplication(database.GetConnectionString(), authPermitLimit, cataloguePermitLimit);
         using var client = CreateClient();
         await ExpectAsync(await client.GetAsync("/health/live"), HttpStatusCode.OK);
     }
@@ -60,14 +67,16 @@ public class ApiFixture : IAsyncLifetime
         return client;
     }
 
-    public async Task<(string Email, TokenPair Tokens)> RegisterAsync()
+    public async Task<(string Email, TokenPair Tokens)> RegisterAsync(string? name = null)
     {
         var email = $"customer-{Guid.NewGuid():N}@example.com";
         using var client = CreateClient();
-        await ExpectAsync(await client.PostAsJsonAsync("/api/v1/auth/register", new { email, password = Password }),
-            HttpStatusCode.Accepted);
+        await ExpectAsync(await client.PostAsJsonAsync("/api/v1/auth/register",
+            new { name = name ?? "Integration Customer", email, password = Password }), HttpStatusCode.Accepted);
         return (email, await LoginAsync(email));
     }
+
+    public async Task<HttpClient> CustomerAsync() => CreateClient((await RegisterAsync()).Tokens.AccessToken);
 
     public async Task<TokenPair> LoginAsync(string email)
     {
@@ -83,7 +92,7 @@ public class ApiFixture : IAsyncLifetime
         await using (var scope = Services.CreateAsyncScope())
         {
             var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-            var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true };
+            var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true, Name = $"Integration {role}" };
             AssertSucceeded(await users.CreateAsync(user, Password));
             AssertSucceeded(await users.AddToRoleAsync(user, role));
             var db = scope.ServiceProvider.GetRequiredService<CantinaDbContext>();
@@ -94,14 +103,14 @@ public class ApiFixture : IAsyncLifetime
         return CreateClient((await LoginAsync(email)).AccessToken);
     }
 
-    public static string Menu(Guid store) => $"/api/v1/stores/{store}/menu-items";
+    public static string Menu(string storeSlug) => $"/api/v1/stores/{storeSlug}/menu-items";
     public static MenuItemInput Input(string? name = null, MenuItemKind kind = MenuItemKind.Dish, decimal price = 42.50m) =>
         new(kind, name ?? $"Item-{Guid.NewGuid():N}", "Freshly prepared integration meal.",
             price, "https://images.example.com/integration.jpg");
 
-    public static async Task<MenuItemDto> CreateItemAsync(HttpClient client, Guid store, MenuItemInput? input = null)
+    public static async Task<MenuItemDto> CreateItemAsync(HttpClient client, string storeSlug, MenuItemInput? input = null)
     {
-        var response = await client.PostAsJsonAsync(Menu(store), input ?? Input());
+        var response = await client.PostAsJsonAsync(Menu(storeSlug), input ?? Input());
         await ExpectAsync(response, HttpStatusCode.Created);
         Assert.NotNull(response.Headers.Location);
         return (await response.Content.ReadFromJsonAsync<MenuItemDto>())!;
@@ -114,34 +123,32 @@ public class ApiFixture : IAsyncLifetime
     private static void AssertSucceeded(IdentityResult result) =>
         Assert.True(result.Succeeded, string.Join("; ", result.Errors.Select(x => x.Description)));
 
-    private sealed class TestApplication(string connectionString, int limit) : WebApplicationFactory<Program>
+    private sealed class TestApplication(string connectionString, int authLimit, int catalogueLimit)
+        : WebApplicationFactory<Program>
     {
+        private Dictionary<string, string?> Settings => new()
+        {
+            ["ConnectionStrings:DefaultConnection"] = connectionString,
+            ["Database:ApplyMigrations"] = "true",
+            ["Authentication:RateLimit:PermitLimit"] = authLimit.ToString(),
+            ["Catalogue:RateLimit:PermitLimit"] = catalogueLimit.ToString()
+        };
+
         protected override IHost CreateHost(IHostBuilder builder)
         {
-            builder.ConfigureHostConfiguration(config => config.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:DefaultConnection"] = connectionString,
-                ["Database:ApplyMigrations"] = "true",
-                ["Authentication:RateLimit:PermitLimit"] = limit.ToString(),
-                ["Catalogue:RateLimit:PermitLimit"] = "1000"
-            }));
+            builder.ConfigureHostConfiguration(config => config.AddInMemoryCollection(Settings));
             return base.CreateHost(builder);
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:DefaultConnection"] = connectionString,
-                ["Database:ApplyMigrations"] = "true",
-                ["Authentication:RateLimit:PermitLimit"] = limit.ToString(),
-                ["Catalogue:RateLimit:PermitLimit"] = "1000",
-                ["Logging:LogLevel:Default"] = "Warning"
-            }));
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>(Settings) { ["Logging:LogLevel:Default"] = "Warning" }));
         }
     }
 }
 
-public sealed class RateLimitFixture() : ApiFixture(2);
+public sealed class RateLimitFixture() : ApiFixture(2, 1000);
+public sealed class CatalogueRateLimitFixture() : ApiFixture(1000, 4);
 public sealed record TokenPair(string AccessToken, string RefreshToken);

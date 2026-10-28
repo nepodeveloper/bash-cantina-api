@@ -5,18 +5,19 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Cantina.Infrastructure;
 
-public sealed class MenuRepository(CantinaDbContext db, CatalogueCache cache) : IMenuRepository
+public sealed class MenuRepository(CantinaDbContext db, CatalogueCache cache, TimeProvider clock) : IMenuRepository
 {
     private static readonly Expression<Func<MenuItem, MenuItemDto>> Projection = item =>
         new MenuItemDto(item.Id, item.StoreId, item.Kind, item.Name, item.Description, item.Price,
             item.ImageUrl, item.Ratings.Average(rating => (double?)rating.Score), item.Ratings.Count);
 
     public async Task<IReadOnlyList<StoreDto>> GetStoresAsync(CancellationToken ct) =>
-        await db.Stores.AsNoTracking().OrderBy(x => x.Name).ThenBy(x => x.Id)
+        await db.Stores.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ThenBy(x => x.Id)
             .Select(x => new StoreDto(x.Id, x.Slug, x.Name)).ToListAsync(ct);
 
-    public Task<bool> StoreExistsAsync(Guid storeId, CancellationToken ct) =>
-        db.Stores.AsNoTracking().AnyAsync(x => x.Id == storeId, ct);
+    public async Task<Guid?> ResolveStoreAsync(string slug, CancellationToken ct) =>
+        await db.Stores.AsNoTracking().Where(x => x.Slug == slug && x.IsActive)
+            .Select(x => (Guid?)x.Id).SingleOrDefaultAsync(ct);
 
     public Task<bool> HasMembershipAsync(Guid storeId, string userId, CancellationToken ct) =>
         db.StoreMemberships.AsNoTracking().AnyAsync(x => x.StoreId == storeId && x.UserId == userId, ct);
@@ -68,13 +69,29 @@ public sealed class MenuRepository(CantinaDbContext db, CatalogueCache cache) : 
         return result;
     }
 
+    public async Task<Page<RatingDto>?> GetRatingsAsync(Guid storeId, Guid itemId, RatingsQuery query, CancellationToken ct)
+    {
+        CatalogueValidation.Validate(query);
+        if (!await db.MenuItems.AsNoTracking().AnyAsync(x => x.StoreId == storeId && x.Id == itemId, ct))
+            return null;
+        var ratings = db.Ratings.AsNoTracking().Where(x => x.StoreId == storeId && x.MenuItemId == itemId);
+        var total = await ratings.CountAsync(ct);
+        // Reviewer identity is deliberately not projected; ratings are public to every authenticated reader.
+        var page = await ratings.OrderByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.CustomerId)
+            .Skip((query.Page - 1) * query.PageSize).Take(query.PageSize)
+            .Select(x => new RatingDto(x.Score, x.ReviewText, x.CreatedAtUtc, x.UpdatedAtUtc)).ToListAsync(ct);
+        return new Page<RatingDto>(page.AsReadOnly(), query.Page, query.PageSize, total);
+    }
+
     public async Task<MenuItemDto> CreateAsync(Guid storeId, MenuItemInput input, CancellationToken ct)
     {
         CatalogueValidation.Validate(input);
+        var now = clock.GetUtcNow();
         var item = new MenuItem
         {
             Id = Guid.NewGuid(), StoreId = storeId, Kind = input.Kind, Name = input.Name,
-            Description = input.Description, Price = input.Price, ImageUrl = input.ImageUrl
+            Description = input.Description, Price = input.Price, ImageUrl = input.ImageUrl,
+            CreatedAtUtc = now, UpdatedAtUtc = now
         };
         db.MenuItems.Add(item);
         await db.SaveChangesAsync(ct);
@@ -85,11 +102,17 @@ public sealed class MenuRepository(CantinaDbContext db, CatalogueCache cache) : 
     public async Task<MenuItemDto?> UpdateAsync(Guid storeId, Guid itemId, MenuItemInput input, CancellationToken ct)
     {
         CatalogueValidation.Validate(input);
-        var updated = await db.MenuItems.Where(x => x.StoreId == storeId && x.Id == itemId)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Kind, input.Kind)
-                .SetProperty(x => x.Name, input.Name).SetProperty(x => x.Description, input.Description)
-                .SetProperty(x => x.Price, input.Price).SetProperty(x => x.ImageUrl, input.ImageUrl), ct);
-        if (updated == 0) return null;
+        // Tracked load plus SaveChanges so the xmin concurrency token is enforced; ExecuteUpdate would bypass it.
+        var entity = await db.MenuItems.SingleOrDefaultAsync(x => x.StoreId == storeId && x.Id == itemId, ct);
+        if (entity is null) return null;
+        entity.Kind = input.Kind;
+        entity.Name = input.Name;
+        entity.Description = input.Description;
+        entity.Price = input.Price;
+        entity.ImageUrl = input.ImageUrl;
+        entity.UpdatedAtUtc = clock.GetUtcNow();
+        await db.SaveChangesAsync(ct);
+        db.Entry(entity).State = EntityState.Detached;
         cache.Invalidate(storeId);
         return await GetAsync(storeId, itemId, ct);
     }
@@ -101,15 +124,17 @@ public sealed class MenuRepository(CantinaDbContext db, CatalogueCache cache) : 
         return deleted > 0;
     }
 
-    public async Task<bool> RateAsync(Guid storeId, Guid itemId, string customerId, int score, CancellationToken ct)
+    public async Task<bool> RateAsync(Guid storeId, Guid itemId, string customerId, RatingInput input, CancellationToken ct)
     {
-        CatalogueValidation.ValidateScore(score);
+        input = CatalogueValidation.Validate(input);
+        var now = clock.GetUtcNow();
         var affected = await db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO "Ratings" ("StoreId", "MenuItemId", "CustomerId", "Score")
-            SELECT "StoreId", "Id", {customerId}, {score}
+            INSERT INTO "Ratings" ("StoreId", "MenuItemId", "CustomerId", "Score", "ReviewText", "CreatedAtUtc", "UpdatedAtUtc")
+            SELECT "StoreId", "Id", {customerId}, {input.Score}, {input.ReviewText}, {now}, {now}
             FROM "MenuItems" WHERE "StoreId" = {storeId} AND "Id" = {itemId}
             ON CONFLICT ("StoreId", "MenuItemId", "CustomerId")
-            DO UPDATE SET "Score" = EXCLUDED."Score"
+            DO UPDATE SET "Score" = EXCLUDED."Score", "ReviewText" = EXCLUDED."ReviewText",
+                          "UpdatedAtUtc" = EXCLUDED."UpdatedAtUtc"
             """, ct);
         if (affected > 0) cache.Invalidate(storeId);
         return affected > 0;

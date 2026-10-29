@@ -159,6 +159,38 @@ public sealed class IdempotencyTests(ApiFixture fixture)
     }
 }
 
+public sealed class SqliteIdempotencyTests
+{
+    [Theory]
+    [InlineData(0, false, false)]
+    [InlineData(3, false, true)]
+    [InlineData(3, true, false)]
+    [InlineData(1441, false, true)]
+    [InlineData(1441, true, true)]
+    public async Task Upsert_only_replaces_expired_records(int ageMinutes, bool completed, bool expired)
+    {
+        await using var db = new CantinaDbContext(new DbContextOptionsBuilder<CantinaDbContext>()
+            .UseSqlite("Data Source=:memory:").Options);
+        await db.Database.OpenConnectionAsync();
+        await db.Database.EnsureCreatedAsync();
+        var user = new ApplicationUser { Name = "SQLite Customer" };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        using var cache = new CatalogueCache();
+        var store = new IdempotencyStore(db, TimeProvider.System, cache);
+        Assert.IsType<IdempotencyState.Reserved>(await store.BeginAsync(user.Id, "key", "body", default));
+        var created = DateTimeOffset.UtcNow.AddMinutes(-ageMinutes);
+        await db.IdempotencyRecords.ExecuteUpdateAsync(setters => setters
+            .SetProperty(record => record.CreatedAtUtc, created)
+            .SetProperty(record => record.CompletedAtUtc, completed ? created : (DateTimeOffset?)null));
+
+        var state = await store.BeginAsync(user.Id, "key", "body", default);
+        if (expired) Assert.IsType<IdempotencyState.Reserved>(state);
+        else if (completed) Assert.IsType<IdempotencyState.Completed>(state);
+        else Assert.IsType<IdempotencyState.InProgress>(state);
+    }
+}
+
 public sealed class IdempotencyDeliveryTests
 {
     [Fact]

@@ -41,8 +41,9 @@ public sealed class IdempotencyStore(CantinaDbContext db, TimeProvider clock, Ca
             SET "Fingerprint" = EXCLUDED."Fingerprint", "Owner" = EXCLUDED."Owner",
                 "StatusCode" = 0, "Location" = NULL, "Body" = NULL,
                 "CreatedAtUtc" = EXCLUDED."CreatedAtUtc", "CompletedAtUtc" = NULL
-            WHERE "CreatedAtUtc" <= {storedRetentionLimit}
-               OR ("CompletedAtUtc" IS NULL AND "CreatedAtUtc" <= {storedReservationLimit})
+            WHERE "IdempotencyRecords"."CreatedAtUtc" <= {storedRetentionLimit}
+               OR ("IdempotencyRecords"."CompletedAtUtc" IS NULL
+                   AND "IdempotencyRecords"."CreatedAtUtc" <= {storedReservationLimit})
             """, ct);
         var existing = await Find(userId, key).AsNoTracking().SingleOrDefaultAsync(ct);
         if (existing?.Owner == owner) return new IdempotencyState.Reserved(owner);

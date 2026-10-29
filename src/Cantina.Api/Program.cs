@@ -106,14 +106,13 @@ var protection = builder.Services.AddDataProtection().SetApplicationName("BashCa
 if (builder.Configuration["DataProtection:KeysPath"] is { Length: > 0 } keysPath)
     protection.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
 
+builder.Services.AddSingleton(_ => new ConcurrencyLimiter(new ConcurrencyLimiterOptions
+{
+    PermitLimit = 128,
+    QueueLimit = 0
+}));
 builder.Services.AddRateLimiter(options =>
 {
-    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(_ =>
-        RateLimitPartition.GetConcurrencyLimiter("global", _ => new ConcurrencyLimiterOptions
-        {
-            PermitLimit = 128,
-            QueueLimit = 0
-        }));
     AddFixedWindowPolicy("auth", builder.Configuration.GetValue("Authentication:RateLimit:PermitLimit", 10),
         context => "ip:" + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown"));
     // Catalogue routes authenticate first, so abuse is attributed to the account rather than a shared NAT address.
@@ -160,6 +159,7 @@ app.UseStatusCodePages(async context =>
 if (!app.Environment.IsDevelopment() && app.Configuration.GetValue("Security:HttpsRedirection", true))
     app.UseHttpsRedirection();
 app.UseRouting();
+app.UseMiddleware<GlobalConcurrencyMiddleware>();
 app.UseAuthentication();
 // Placed after authentication so catalogue limits can partition on the signed-in account.
 app.UseRateLimiter();

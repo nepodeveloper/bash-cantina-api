@@ -6,7 +6,7 @@ public sealed record IdempotentResponse(int StatusCode, string? Location, string
 public abstract record IdempotencyState
 {
     /// <summary>This caller now owns the key and must complete or release it.</summary>
-    public sealed record Reserved : IdempotencyState;
+    public sealed record Reserved(Guid Owner) : IdempotencyState;
 
     /// <summary>An earlier identical request already finished; replay its response.</summary>
     public sealed record Completed(IdempotentResponse Response) : IdempotencyState;
@@ -25,6 +25,7 @@ public abstract record IdempotencyState
 public interface IIdempotencyStore
 {
     Task<IdempotencyState> BeginAsync(string userId, string key, string fingerprint, CancellationToken ct);
-    Task CompleteAsync(string userId, string key, IdempotentResponse response, CancellationToken ct);
-    Task ReleaseAsync(string userId, string key, CancellationToken ct);
+    Task<IdempotentResponse> ExecuteAsync(string userId, string key, Guid owner,
+        Func<Task<IdempotentResponse>> write, CancellationToken ct);
+    Task ReleaseAsync(string userId, string key, Guid owner, CancellationToken ct);
 }

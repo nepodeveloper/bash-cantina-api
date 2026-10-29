@@ -1,16 +1,55 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Claims;
 using System.Text.Json;
+using Cantina.Api;
 using Cantina.Infrastructure;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Cantina.IntegrationTests;
 
 [Collection("api")]
 public sealed class AuthenticationTests(ApiFixture fixture)
 {
+    [Theory]
+    [InlineData("valid", HttpStatusCode.OK)]
+    [InlineData("two-factor", HttpStatusCode.Unauthorized)]
+    [InlineData("stamp", HttpStatusCode.Unauthorized)]
+    [InlineData("logout", HttpStatusCode.Unauthorized)]
+    public async Task External_exchange_requires_current_stamp_and_no_pending_second_factor(string change, HttpStatusCode expected)
+    {
+        var (email, tokens) = await fixture.RegisterAsync();
+        string code;
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var user = (await users.FindByEmailAsync(email))!;
+            code = scope.ServiceProvider.GetRequiredService<ExternalLoginCodes>()
+                .Issue(user.Id, await users.GetSecurityStampAsync(user));
+            if (change == "two-factor") Assert.True((await users.SetTwoFactorEnabledAsync(user, true)).Succeeded);
+            if (change == "stamp") Assert.True((await users.UpdateSecurityStampAsync(user)).Succeeded);
+        }
+        using var client = fixture.CreateClient(tokens.AccessToken);
+        if (change == "logout")
+            await ApiFixture.ExpectAsync(await client.PostAsync("/api/v1/auth/logout", null), HttpStatusCode.NoContent);
+        var response = await client.PostAsJsonAsync("/api/v1/auth/external/exchange", new { code });
+        await ApiFixture.ExpectAsync(response, expected);
+        if (expected == HttpStatusCode.OK)
+        {
+            var exchanged = (await response.Content.ReadFromJsonAsync<TokenPair>())!;
+            using var authenticated = fixture.CreateClient(exchanged.AccessToken);
+            await ApiFixture.ExpectAsync(await authenticated.GetAsync("/api/v1/auth/me"), HttpStatusCode.OK);
+        }
+        await ApiFixture.ExpectAsync(await client.PostAsJsonAsync("/api/v1/auth/external/exchange", new { code }),
+            HttpStatusCode.Unauthorized);
+    }
+
     [Fact]
     public async Task Register_login_refresh_and_me_use_real_identity_tokens()
     {
@@ -216,6 +255,67 @@ public sealed class AuthenticationTests(ApiFixture fixture)
         await ApiFixture.ExpectAsync(await client.GetAsync("/api/v1/auth/me"), HttpStatusCode.Unauthorized);
         await ApiFixture.ExpectAsync(await client.PostAsJsonAsync("/api/v1/auth/refresh",
             new { tokens.RefreshToken }), HttpStatusCode.Unauthorized);
+    }
+}
+
+public sealed class ExternalLoginCodeTests
+{
+    [Fact]
+    public void A_restarted_ledger_cannot_redeem_codes_from_the_previous_instance()
+    {
+        var protection = new EphemeralDataProtectionProvider();
+        var previous = new ExternalLoginCodes(protection, TimeProvider.System);
+        var code = previous.Issue("user", "stamp");
+        Assert.NotNull(previous.TryConsume(code));
+        var restarted = new ExternalLoginCodes(protection, TimeProvider.System);
+        Assert.Null(restarted.TryConsume(code));
+    }
+
+    [Fact]
+    public void UserInfo_maps_verified_email_even_when_the_id_token_has_no_verification_claim()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Authentication:External:ReturnUrls:0"] = "https://client.example.com/signin",
+            ["Authentication:External:Providers:test:Authority"] = "https://identity.example.com",
+            ["Authentication:External:Providers:test:ClientId"] = "test-client",
+            ["Authentication:External:Providers:test:ClientSecret"] = "test-only"
+        }).Build();
+        var registrations = new ServiceCollection().AddLogging();
+        registrations.AddDataProtection();
+        registrations.AddExternalLogins(configuration);
+        using var services = registrations.BuildServiceProvider();
+        var options = services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>().Get("test");
+        Assert.True(options.GetClaimsFromUserInfoEndpoint);
+        using var userInfo = JsonDocument.Parse("""{"email":"verified@example.com","email_verified":true}""");
+        var identity = new ClaimsIdentity();
+        foreach (var action in options.ClaimActions) action.Run(userInfo.RootElement, identity, "test");
+        Assert.Equal("true", identity.FindFirst("email_verified")?.Value, ignoreCase: true);
+    }
+
+    [Fact]
+    public async Task Codes_are_atomic_non_evicting_and_fail_closed_at_capacity_until_expiry()
+    {
+        var clock = new CodeClock();
+        var codes = new ExternalLoginCodes(new EphemeralDataProtectionProvider(), clock);
+        var first = codes.Issue("user", "stamp");
+        var results = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => Task.Run(() => codes.TryConsume(first))));
+        Assert.Single(results.OfType<ExternalLoginCodes.Login>());
+        for (var index = 1; index < 10_000; index++)
+            Assert.NotNull(codes.TryConsume(codes.Issue("user", "stamp")));
+        var overflow = codes.Issue("user", "stamp");
+        Assert.Null(codes.TryConsume(overflow));
+        Assert.Null(codes.TryConsume(first));
+        clock.Now += ExternalLoginCodes.Lifetime;
+        Assert.Null(codes.TryConsume(overflow));
+        Assert.NotNull(codes.TryConsume(codes.Issue("user", "new-stamp")));
+        Assert.Null(codes.TryConsume("invalid"));
+    }
+
+    private sealed class CodeClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 }
 

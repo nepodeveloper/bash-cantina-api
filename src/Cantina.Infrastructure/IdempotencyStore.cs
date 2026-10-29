@@ -1,6 +1,6 @@
 using Cantina.Application;
+using Cantina.Domain;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 namespace Cantina.Infrastructure;
 
@@ -9,6 +9,7 @@ public sealed class IdempotencyRecord
     public string UserId { get; set; } = "";
     public string Key { get; set; } = "";
     public string Fingerprint { get; set; } = "";
+    public Guid Owner { get; set; }
     public int StatusCode { get; set; }
     public string? Location { get; set; }
     public string? Body { get; set; }
@@ -16,51 +17,68 @@ public sealed class IdempotencyRecord
     public DateTimeOffset? CompletedAtUtc { get; set; }
 }
 
-public sealed class IdempotencyStore(CantinaDbContext db, TimeProvider clock) : IIdempotencyStore
+public sealed class IdempotencyStore(CantinaDbContext db, TimeProvider clock, CatalogueCache cache) : IIdempotencyStore
 {
     // Long enough to outlive client retry windows, short enough to keep the table small.
     public static readonly TimeSpan Retention = TimeSpan.FromHours(24);
+    public static readonly TimeSpan ReservationLifetime = TimeSpan.FromMinutes(2);
 
     public async Task<IdempotencyState> BeginAsync(string userId, string key, string fingerprint, CancellationToken ct)
     {
+        var owner = Guid.NewGuid();
+        var now = clock.GetUtcNow();
+        await db.IdempotencyRecords.Where(record => record.UserId == userId && record.Key != key
+            && record.CreatedAtUtc <= now - Retention).ExecuteDeleteAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "IdempotencyRecords" ("UserId", "Key", "Fingerprint", "Owner", "StatusCode", "CreatedAtUtc")
+            VALUES ({userId}, {key}, {fingerprint}, {owner}, 0, {now})
+            ON CONFLICT ("UserId", "Key") DO UPDATE
+            SET "Fingerprint" = EXCLUDED."Fingerprint", "Owner" = EXCLUDED."Owner",
+                "StatusCode" = 0, "Location" = NULL, "Body" = NULL,
+                "CreatedAtUtc" = EXCLUDED."CreatedAtUtc", "CompletedAtUtc" = NULL
+            WHERE "IdempotencyRecords"."CreatedAtUtc" <= {now - Retention}
+               OR ("IdempotencyRecords"."CompletedAtUtc" IS NULL
+                   AND "IdempotencyRecords"."CreatedAtUtc" <= {now - ReservationLifetime})
+            """, ct);
         var existing = await Find(userId, key).AsNoTracking().SingleOrDefaultAsync(ct);
-        if (existing is null)
-        {
-            try
-            {
-                // The primary key is the lock: only one concurrent caller can reserve a key.
-                db.IdempotencyRecords.Add(new IdempotencyRecord
-                {
-                    UserId = userId, Key = key, Fingerprint = fingerprint, CreatedAtUtc = clock.GetUtcNow()
-                });
-                await db.SaveChangesAsync(ct);
-                return new IdempotencyState.Reserved();
-            }
-            catch (DbUpdateException exception) when (exception.InnerException is PostgresException
-                { SqlState: PostgresErrorCodes.UniqueViolation })
-            {
-                db.ChangeTracker.Clear();
-                existing = await Find(userId, key).AsNoTracking().SingleOrDefaultAsync(ct);
-            }
-        }
+        if (existing?.Owner == owner) return new IdempotencyState.Reserved(owner);
         return Describe(existing, fingerprint);
     }
 
-    public async Task CompleteAsync(string userId, string key, IdempotentResponse response, CancellationToken ct)
+    public async Task<IdempotentResponse> ExecuteAsync(string userId, string key, Guid owner,
+        Func<Task<IdempotentResponse>> write, CancellationToken ct)
     {
-        await Find(userId, key).ExecuteUpdateAsync(setters => setters
-            .SetProperty(x => x.StatusCode, response.StatusCode)
-            .SetProperty(x => x.Location, response.Location)
-            .SetProperty(x => x.Body, response.Body)
-            .SetProperty(x => x.CompletedAtUtc, clock.GetUtcNow()), ct);
-        // Bounded, index-seekable cleanup: this caller's own expired keys only, never a full-table scan.
-        await db.IdempotencyRecords
-            .Where(x => x.UserId == userId && x.CreatedAtUtc < clock.GetUtcNow() - Retention)
-            .ExecuteDeleteAsync(ct);
+        var stores = new HashSet<Guid>();
+        var result = await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            db.ChangeTracker.Clear();
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            var record = await db.IdempotencyRecords.FromSqlInterpolated($"""
+                SELECT * FROM "IdempotencyRecords" WHERE "UserId" = {userId} AND "Key" = {key} FOR UPDATE
+                """).AsNoTracking().SingleOrDefaultAsync(ct);
+            if (record is null || record.Owner != owner)
+                throw new InvalidOperationException("The idempotency reservation is no longer owned by this request.");
+            if (record.CompletedAtUtc is not null)
+                return new IdempotentResponse(record.StatusCode, record.Location, record.Body ?? "");
+
+            var response = await write();
+            stores.UnionWith(db.ChangeTracker.Entries<MenuItem>().Select(entry => entry.Entity.StoreId));
+            var completed = await Find(userId, key).Where(entry => entry.Owner == owner && entry.CompletedAtUtc == null)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(entry => entry.StatusCode, response.StatusCode)
+                    .SetProperty(entry => entry.Location, response.Location)
+                    .SetProperty(entry => entry.Body, response.Body)
+                    .SetProperty(entry => entry.CompletedAtUtc, clock.GetUtcNow()), ct);
+            if (completed != 1) throw new InvalidOperationException("The idempotency reservation could not be completed.");
+            await transaction.CommitAsync(ct);
+            return response;
+        });
+        foreach (var store in stores) cache.Invalidate(store);
+        return result;
     }
 
-    public Task ReleaseAsync(string userId, string key, CancellationToken ct) =>
-        Find(userId, key).Where(x => x.CompletedAtUtc == null).ExecuteDeleteAsync(ct);
+    public Task ReleaseAsync(string userId, string key, Guid owner, CancellationToken ct) =>
+        Find(userId, key).Where(x => x.Owner == owner && x.CompletedAtUtc == null).ExecuteDeleteAsync(ct);
 
     private IQueryable<IdempotencyRecord> Find(string userId, string key) =>
         db.IdempotencyRecords.Where(x => x.UserId == userId && x.Key == key);

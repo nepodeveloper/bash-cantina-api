@@ -45,7 +45,12 @@ public static class ReviewValidation
         if (!SupportedSorts.Contains(query.Sort))
             errors["sort"] = [$"Choose {string.Join(", ", SupportedSorts)}."];
         if (errors.Count != 0) throw new RequestValidationException(errors);
-        return query with { Search = string.IsNullOrEmpty(search) ? null : search };
+        return query with
+        {
+            Search = string.IsNullOrEmpty(search) ? null : search,
+            FromUtc = query.FromUtc?.ToUniversalTime(),
+            ToUtc = query.ToUtc?.ToUniversalTime()
+        };
     }
 }
 

@@ -413,6 +413,9 @@ namespace Cantina.Infrastructure.Migrations
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)");
 
+                    b.Property<Guid>("Owner")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("StatusCode")
                         .HasColumnType("integer");
 

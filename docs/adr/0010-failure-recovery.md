@@ -40,11 +40,19 @@ tracker on entry so each attempt starts clean.
 | Same key, same body, finished | `200/201` replayed verbatim with `Idempotency-Replayed: true` |
 | Same key, same body, still running | `409` with `Retry-After` |
 | Same key, different body | `422` |
-| Request failed | Reservation released, so the same key can be retried |
+| Request failed before commit | Business write rolled back and reservation released |
+| Delivery failed after commit | Completed response retained for replay |
 
-The reservation is a primary-key insert, so two concurrent retries cannot both execute the write.
-The response is captured by buffering it, which keeps the filter generic — it stores whatever the
-handler produced, including the `Location` header.
+Reservation acquisition is an atomic primary-key upsert with a unique owner token. Completed
+keys expire after 24 hours, checked during acquisition rather than only during unrelated cleanup.
+Uncompleted reservations can be reclaimed after a two-minute lease. Completion and release
+require the current owner, so an abandoned caller cannot affect a replacement reservation.
+
+The business write and completed response are committed in one transaction under a reservation
+row lock. This prevents a second owner from taking over while a write is actively committing.
+The response is buffered, including its `Location` header, and delivered only after commit.
+A disconnect after commit never releases the completed record. Catalogue cache invalidation
+also runs after commit.
 
 `PUT` and `DELETE` are already idempotent by HTTP semantics and need no key.
 
@@ -57,8 +65,9 @@ structured log scope, so a failed call can be traced to its log line.
 
 - A client that times out can safely retry a create with the same key and will either get the
   original response or a clear "still running" signal. It never silently double-creates.
-- Idempotency records are retained for 24 hours and cleaned up per user on completion, so the table
-  stays bounded without a scheduled job or a full-table scan.
+- Idempotency records expire after 24 hours and expired records are cleaned up per user during
+  acquisition, without a scheduled job or a full-table scan. Inactive users' records are removed
+  on their next keyed request.
 - `409` now has two meanings: a lost update (ADR 0007) and an in-flight idempotent retry. Both are
   retry-after-re-read, and the ProblemDetails title distinguishes them.
 - Retry is for *transient* faults only. A failed business rule is not retried, and non-idempotent

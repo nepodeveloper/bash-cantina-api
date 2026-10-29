@@ -87,15 +87,18 @@ public static class ExternalAuthEndpoints
         if (!await signIn.CanSignInAsync(user) || await users.IsLockedOutAsync(user))
             return ApiErrors.Problem(context, 401);
         await context.SignOutAsync(IdentityConstants.ExternalScheme);
-        return Results.Redirect(QueryHelpers.AddQueryString(returnUrl!, "code", codes.Issue(user.Id)));
+        return Results.Redirect(QueryHelpers.AddQueryString(returnUrl!, "code",
+            codes.Issue(user.Id, await users.GetSecurityStampAsync(user))));
     }
 
     private static async Task<IResult> ExchangeAsync(ExchangeInput input, ExternalLoginCodes codes,
         SignInManager<ApplicationUser> signIn, UserManager<ApplicationUser> users, HttpContext context)
     {
-        if (codes.TryConsume(input.Code) is not { } userId) return ApiErrors.Problem(context, 401);
-        var user = await users.FindByIdAsync(userId);
-        if (user is null || !await signIn.CanSignInAsync(user) || await users.IsLockedOutAsync(user))
+        if (codes.TryConsume(input.Code) is not { } login) return ApiErrors.Problem(context, 401);
+        var user = await users.FindByIdAsync(login.UserId);
+        if (user is null || !await signIn.CanSignInAsync(user) || await users.IsLockedOutAsync(user)
+            || await users.GetTwoFactorEnabledAsync(user)
+            || !string.Equals(login.SecurityStamp, await users.GetSecurityStampAsync(user), StringComparison.Ordinal))
             return ApiErrors.Problem(context, 401);
         var principal = await signIn.CreateUserPrincipalAsync(user);
         return Results.SignIn(principal, authenticationScheme: IdentityConstants.BearerScheme);

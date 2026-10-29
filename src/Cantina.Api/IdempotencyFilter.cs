@@ -31,6 +31,7 @@ public sealed class IdempotencyFilter<TRequest>(IIdempotencyStore store, ILogger
         var userId = http.User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (userId is null) return ApiErrors.Problem(http, 401);
         var fingerprint = Fingerprint(http, context);
+        Guid owner;
 
         switch (await store.BeginAsync(userId, supplied, fingerprint, http.RequestAborted))
         {
@@ -44,20 +45,26 @@ public sealed class IdempotencyFilter<TRequest>(IIdempotencyStore store, ILogger
                 return ApiErrors.Problem(http, 409, "An identical request is still in progress. Retry shortly.");
             case IdempotencyState.Conflict:
                 return ApiErrors.Problem(http, 422, "This Idempotency-Key was already used with a different request body.");
+            case IdempotencyState.Reserved(var reservationOwner):
+                owner = reservationOwner;
+                break;
+            default:
+                throw new InvalidOperationException("Unknown idempotency state.");
         }
 
+        IdempotentResponse captured;
         try
         {
-            var captured = await CaptureAsync(http, context, next);
-            await store.CompleteAsync(userId, supplied, captured, http.RequestAborted);
-            return Results.Empty;
+            captured = await store.ExecuteAsync(userId, supplied, owner,
+                () => CaptureAsync(http, context, next), http.RequestAborted);
         }
         catch
         {
-            // Releasing the reservation is what makes a failed request re-runnable with the same key.
-            await store.ReleaseAsync(userId, supplied, CancellationToken.None);
+            await store.ReleaseAsync(userId, supplied, owner, CancellationToken.None);
             throw;
         }
+        if (captured.Location is { Length: > 0 } createdLocation) http.Response.Headers.Location = createdLocation;
+        return Results.Content(captured.Body, "application/json", Encoding.UTF8, captured.StatusCode);
     }
 
     private static async Task<IdempotentResponse> CaptureAsync(HttpContext http,
@@ -70,9 +77,6 @@ public sealed class IdempotencyFilter<TRequest>(IIdempotencyStore store, ILogger
         {
             if (await next(context) is IResult result) await result.ExecuteAsync(http);
             var body = Encoding.UTF8.GetString(buffer.ToArray());
-            buffer.Position = 0;
-            http.Response.Body = originalBody;
-            await buffer.CopyToAsync(originalBody, http.RequestAborted);
             return new IdempotentResponse(http.Response.StatusCode, http.Response.Headers.Location.ToString(), body);
         }
         finally

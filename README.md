@@ -235,6 +235,13 @@ An account is linked to a provider identity only when the provider asserts a *ve
 email; otherwise the callback returns `403`. Externally provisioned users are ordinary
 customers and are subject to the same lockout, logout and revocation rules.
 
+Codes are bound to the account's security stamp, so logout or administrative revocation also
+invalidates outstanding codes. Accounts with local two-factor authentication enabled cannot
+exchange codes because this API has no second-factor flow. Consumption is atomic and retained
+without eviction until expiry; a full consumed-code ledger rejects exchanges rather than
+allowing replay. Like the catalogue cache, this ledger assumes a single running API instance;
+codes fail closed across restarts or attempts to exchange on a different instance.
+
 ## Retrying a request safely
 
 `POST /api/v1/stores/{storeSlug}/menu-items` accepts an optional `Idempotency-Key` header
@@ -247,9 +254,13 @@ same key:
 | Same key and body, finished | Original response replayed, `Idempotency-Replayed: true` |
 | Same key and body, still running | `409` with `Retry-After` |
 | Same key, different body | `422` |
-| Original request failed | The key is released, so the retry runs normally |
+| Request failed before commit | The item is rolled back and the key released |
+| Response delivery failed after commit | Original response replayed; the item is not created again |
 
-Keys are scoped per user and retained for 24 hours. `PUT` and `DELETE` are already
+The item and completed replay record commit in one transaction before response delivery.
+Keys are scoped per user and expire after 24 hours, including on lookup. Abandoned reservations
+can be reclaimed after two minutes; ownership checks and row locking prevent an old caller
+from writing through or releasing a replacement reservation. `PUT` and `DELETE` are already
 idempotent and need no key. See [ADR 0010](docs/adr/0010-failure-recovery.md) for how
 rollback, transient retry and replay fit together.
 

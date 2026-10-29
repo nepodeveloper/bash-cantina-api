@@ -95,7 +95,7 @@ public sealed class MenuRepository(CantinaDbContext db, CatalogueCache cache, Ti
         };
         db.MenuItems.Add(item);
         await db.SaveChangesAsync(ct);
-        cache.Invalidate(storeId);
+        if (db.Database.CurrentTransaction is null) cache.Invalidate(storeId);
         return new(item.Id, storeId, item.Kind, item.Name, item.Description, item.Price, item.ImageUrl, null, 0);
     }
 

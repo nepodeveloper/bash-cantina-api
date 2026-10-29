@@ -39,6 +39,18 @@ public sealed class ReviewValidationTests
         Assert.Contains("date", exception.Errors.Keys);
     }
 
+    [Fact]
+    public void DateBoundsAreNormalizedToUtcWithoutChangingTheInstant()
+    {
+        var from = new DateTimeOffset(2026, 10, 1, 10, 0, 0, TimeSpan.FromHours(2));
+        var to = new DateTimeOffset(2026, 10, 1, 7, 0, 0, TimeSpan.FromHours(-3));
+        var query = ReviewValidation.Validate(new ReviewQuery(FromUtc: from, ToUtc: to));
+        Assert.Equal(from, query.FromUtc);
+        Assert.Equal(to, query.ToUtc);
+        Assert.Equal(TimeSpan.Zero, query.FromUtc!.Value.Offset);
+        Assert.Equal(TimeSpan.Zero, query.ToUtc!.Value.Offset);
+    }
+
     [Theory]
     [InlineData("updated")]
     [InlineData("-updated")]

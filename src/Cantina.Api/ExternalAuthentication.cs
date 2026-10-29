@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 namespace Cantina.Api;
@@ -45,14 +45,16 @@ public sealed class ExternalProviderRegistry(IReadOnlyDictionary<string, string>
 public sealed class ExternalLoginCodes(IDataProtectionProvider protection, TimeProvider clock)
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(2);
-    private readonly IDataProtector protector = protection.CreateProtector("Cantina.ExternalLogin.v1");
-    private readonly MemoryCache consumed = new(new MemoryCacheOptions { SizeLimit = 10_000 });
+    private readonly IDataProtector protector = protection.CreateProtector("Cantina.ExternalLogin.v2", Guid.NewGuid().ToString("N"));
+    private readonly Dictionary<string, long> consumed = new(StringComparer.Ordinal);
     private readonly Lock gate = new();
 
-    public string Issue(string userId) => protector.Protect(string.Join('|',
-        Guid.NewGuid().ToString("N"), userId, clock.GetUtcNow().Add(Lifetime).ToUnixTimeSeconds()));
+    public string Issue(string userId, string securityStamp) => protector.Protect(string.Join('|',
+        Guid.NewGuid().ToString("N"), userId, securityStamp, clock.GetUtcNow().Add(Lifetime).ToUnixTimeSeconds()));
 
-    public string? TryConsume(string? code)
+    public sealed record Login(string UserId, string SecurityStamp);
+
+    public Login? TryConsume(string? code)
     {
         if (string.IsNullOrEmpty(code) || code.Length > 4096) return null;
         string payload;
@@ -65,18 +67,17 @@ public sealed class ExternalLoginCodes(IDataProtectionProvider protection, TimeP
             return null;
         }
         var parts = payload.Split('|');
-        if (parts.Length != 3 || !long.TryParse(parts[2], out var expiry)) return null;
-        if (DateTimeOffset.FromUnixTimeSeconds(expiry) <= clock.GetUtcNow()) return null;
+        if (parts.Length != 4 || !long.TryParse(parts[3], out var expiry)) return null;
         lock (gate)
         {
-            if (consumed.TryGetValue(parts[0], out _)) return null;
-            consumed.Set(parts[0], true, new MemoryCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = Lifetime,
-                Size = 1
-            });
+            var now = clock.GetUtcNow().ToUnixTimeSeconds();
+            if (expiry <= now || consumed.ContainsKey(parts[0])) return null;
+            foreach (var expired in consumed.Where(entry => entry.Value <= now).Select(entry => entry.Key).ToArray())
+                consumed.Remove(expired);
+            if (consumed.Count >= 10_000) return null;
+            consumed.Add(parts[0], expiry);
         }
-        return parts[1];
+        return new Login(parts[1], parts[2]);
     }
 }
 
@@ -118,6 +119,7 @@ public static class ExternalAuthentication
                 handler.UsePkce = true;
                 handler.SaveTokens = false;
                 handler.GetClaimsFromUserInfoEndpoint = true;
+                handler.ClaimActions.MapUniqueJsonKey("email_verified", "email_verified");
                 handler.CallbackPath = $"/signin-{scheme}";
                 handler.SignInScheme = IdentityConstants.ExternalScheme;
                 handler.Scope.Clear();

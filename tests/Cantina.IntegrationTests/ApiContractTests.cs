@@ -1,8 +1,50 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Threading.RateLimiting;
+using Cantina.Api;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Cantina.IntegrationTests;
+
+public sealed class GlobalConcurrencyTests
+{
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Saturated_outer_limiter_blocks_downstream_work_but_not_health_probes(bool probe)
+    {
+        using var services = new ServiceCollection().AddLogging().AddProblemDetails().BuildServiceProvider();
+        using var limiter = new ConcurrencyLimiter(new ConcurrencyLimiterOptions { PermitLimit = 128, QueueLimit = 0 });
+        using var occupied = limiter.AttemptAcquire(128);
+        var downstreamCalls = 0;
+        var middleware = new GlobalConcurrencyMiddleware(_ =>
+        {
+            downstreamCalls++;
+            return Task.CompletedTask;
+        }, limiter);
+        var context = new DefaultHttpContext { RequestServices = services };
+        context.Response.Body = new MemoryStream();
+        if (probe) context.SetEndpoint(new Endpoint(_ => Task.CompletedTask,
+            new EndpointMetadataCollection(new DisableRateLimitingAttribute()), "health"));
+        await middleware.InvokeAsync(context);
+        Assert.Equal(probe ? 1 : 0, downstreamCalls);
+        Assert.Equal(probe ? 200 : 429, context.Response.StatusCode);
+        if (!probe) Assert.Equal("1", context.Response.Headers.RetryAfter);
+    }
+
+    [Fact]
+    public async Task Outer_permit_is_released_when_downstream_authentication_fails()
+    {
+        using var limiter = new ConcurrencyLimiter(new ConcurrencyLimiterOptions { PermitLimit = 1, QueueLimit = 0 });
+        var middleware = new GlobalConcurrencyMiddleware(_ => throw new InvalidOperationException("authentication"), limiter);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => middleware.InvokeAsync(new DefaultHttpContext()));
+        using var available = limiter.AttemptAcquire();
+        Assert.True(available.IsAcquired);
+    }
+}
 
 [Collection("api")]
 public sealed class ApiContractTests(ApiFixture fixture)

@@ -29,16 +29,20 @@ public sealed class IdempotencyStore(CantinaDbContext db, TimeProvider clock, Ca
         var now = clock.GetUtcNow();
         await db.IdempotencyRecords.Where(record => record.UserId == userId && record.Key != key
             && record.CreatedAtUtc <= now - Retention).ExecuteDeleteAsync(ct);
+        var storedNow = db.Database.IsSqlite() ? (object)now.UtcTicks : now;
+        var storedRetentionLimit = db.Database.IsSqlite() ? (object)(now - Retention).UtcTicks : now - Retention;
+        var storedReservationLimit = db.Database.IsSqlite()
+            ? (object)(now - ReservationLifetime).UtcTicks
+            : now - ReservationLifetime;
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO "IdempotencyRecords" ("UserId", "Key", "Fingerprint", "Owner", "StatusCode", "CreatedAtUtc")
-            VALUES ({userId}, {key}, {fingerprint}, {owner}, 0, {now})
+            VALUES ({userId}, {key}, {fingerprint}, {owner}, 0, {storedNow})
             ON CONFLICT ("UserId", "Key") DO UPDATE
             SET "Fingerprint" = EXCLUDED."Fingerprint", "Owner" = EXCLUDED."Owner",
                 "StatusCode" = 0, "Location" = NULL, "Body" = NULL,
                 "CreatedAtUtc" = EXCLUDED."CreatedAtUtc", "CompletedAtUtc" = NULL
-            WHERE "IdempotencyRecords"."CreatedAtUtc" <= {now - Retention}
-               OR ("IdempotencyRecords"."CompletedAtUtc" IS NULL
-                   AND "IdempotencyRecords"."CreatedAtUtc" <= {now - ReservationLifetime})
+            WHERE "CreatedAtUtc" <= {storedRetentionLimit}
+               OR ("CompletedAtUtc" IS NULL AND "CreatedAtUtc" <= {storedReservationLimit})
             """, ct);
         var existing = await Find(userId, key).AsNoTracking().SingleOrDefaultAsync(ct);
         if (existing?.Owner == owner) return new IdempotencyState.Reserved(owner);
@@ -53,9 +57,12 @@ public sealed class IdempotencyStore(CantinaDbContext db, TimeProvider clock, Ca
         {
             db.ChangeTracker.Clear();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            var record = await db.IdempotencyRecords.FromSqlInterpolated($"""
-                SELECT * FROM "IdempotencyRecords" WHERE "UserId" = {userId} AND "Key" = {key} FOR UPDATE
-                """).AsNoTracking().SingleOrDefaultAsync(ct);
+            var recordQuery = db.IdempotencyRecords.Where(record => record.UserId == userId && record.Key == key);
+            if (!db.Database.IsSqlite())
+                recordQuery = db.IdempotencyRecords.FromSqlInterpolated($"""
+                    SELECT * FROM "IdempotencyRecords" WHERE "UserId" = {userId} AND "Key" = {key} FOR UPDATE
+                    """);
+            var record = await recordQuery.AsNoTracking().SingleOrDefaultAsync(ct);
             if (record is null || record.Owner != owner)
                 throw new InvalidOperationException("The idempotency reservation is no longer owned by this request.");
             if (record.CompletedAtUtc is not null)

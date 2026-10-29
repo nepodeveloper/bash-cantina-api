@@ -1,10 +1,18 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.RateLimiting;
 using Cantina.Api;
+using Cantina.Application;
+using Cantina.Domain;
+using Cantina.Infrastructure;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Cantina.IntegrationTests;
@@ -43,6 +51,57 @@ public sealed class GlobalConcurrencyTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => middleware.InvokeAsync(new DefaultHttpContext()));
         using var available = limiter.AttemptAcquire();
         Assert.True(available.IsAcquired);
+    }
+}
+
+public sealed class SqliteApiTests
+{
+    [Fact]
+    public async Task Local_sqlite_supports_identity_idempotency_and_rating_timestamps_without_docker()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"cantina-{Guid.NewGuid():N}.db");
+        await using var application = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["Database:Provider"] = "Sqlite",
+                    ["ConnectionStrings:DefaultConnection"] = $"Data Source={databasePath}",
+                    ["Database:ApplyMigrations"] = "true"
+                }));
+        });
+        using var client = application.CreateClient();
+        const string password = "Integration!Password123";
+        var email = $"sqlite-{Guid.NewGuid():N}@example.com";
+        await using (var scope = application.Services.CreateAsyncScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true, Name = "SQLite Test" };
+            Assert.True((await users.CreateAsync(user, password)).Succeeded);
+            Assert.True((await users.AddToRolesAsync(user, ["Admin", "Customer"])).Succeeded);
+        }
+
+        var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password });
+        await ApiFixture.ExpectAsync(login, HttpStatusCode.OK);
+        var tokens = (await login.Content.ReadFromJsonAsync<TokenPair>())!;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        client.DefaultRequestHeaders.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+        var input = ApiFixture.Input();
+        var route = ApiFixture.Menu(ApiFixture.BashSlug);
+        var created = await client.PostAsJsonAsync(route, input);
+        await ApiFixture.ExpectAsync(created, HttpStatusCode.Created);
+        var item = (await created.Content.ReadFromJsonAsync<MenuItemDto>())!;
+        var replay = await client.PostAsJsonAsync(route, input);
+        await ApiFixture.ExpectAsync(replay, HttpStatusCode.Created);
+        Assert.Equal("true", Assert.Single(replay.Headers.GetValues("Idempotency-Replayed")));
+
+        var rate = await client.PutAsJsonAsync($"{route}/{item.Id}/rating", new { score = 5, reviewText = "SQLite" });
+        await ApiFixture.ExpectAsync(rate, HttpStatusCode.NoContent);
+        var ratings = await client.GetFromJsonAsync<Page<RatingDto>>($"{route}/{item.Id}/ratings");
+        Assert.NotNull(ratings);
+        Assert.Single(ratings.Items);
+        Assert.True(ratings.Items[0].CreatedAtUtc > DateTimeOffset.UtcNow.AddMinutes(-1));
     }
 }
 

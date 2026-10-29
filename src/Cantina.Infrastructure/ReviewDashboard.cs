@@ -83,7 +83,8 @@ public sealed class ReviewDashboard(CantinaDbContext db) : IReviewDashboard
         if (!string.IsNullOrEmpty(query.Search))
         {
             var pattern = "%" + query.Search.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
-            ratings = ratings.Where(x => x.ReviewText != null && EF.Functions.ILike(x.ReviewText, pattern, "\\"));
+            ratings = ratings.Where(x => x.ReviewText != null &&
+                EF.Functions.Like(x.ReviewText.ToLower(), pattern.ToLower(), "\\"));
         }
         return ratings;
     }

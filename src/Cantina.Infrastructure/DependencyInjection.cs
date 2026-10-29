@@ -12,15 +12,28 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
+        var provider = configuration["Database:Provider"] ?? "PostgreSQL";
         var connectionString = configuration.GetConnectionString("DefaultConnection");
-        if (string.IsNullOrWhiteSpace(connectionString))
-            throw new InvalidOperationException("ConnectionStrings:DefaultConnection is required.");
         SeedData.ValidateBootstrapConfiguration(configuration);
 
         services.TryAddSingleton(TimeProvider.System);
-        services.AddDbContext<CantinaDbContext>(options => options.UseNpgsql(connectionString,
-            // Transient network and failover errors are retried in place before the caller ever sees them.
-            npgsql => npgsql.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null)));
+        if (provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
+        {
+            connectionString ??= "Data Source=cantina.db";
+            services.AddDbContext<CantinaDbContext>(options => options.UseSqlite(connectionString));
+        }
+        else if (provider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+                throw new InvalidOperationException("ConnectionStrings:DefaultConnection is required for PostgreSQL.");
+            services.AddDbContext<CantinaDbContext>(options => options.UseNpgsql(connectionString,
+                // Transient network and failover errors are retried in place before the caller ever sees them.
+                npgsql => npgsql.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null)));
+        }
+        else
+        {
+            throw new InvalidOperationException($"Unsupported database provider '{provider}'. Use Sqlite or PostgreSQL.");
+        }
         services.AddIdentityApiEndpoints<ApplicationUser>(options =>
         {
             options.Password.RequiredLength = 12;

@@ -34,8 +34,8 @@ public sealed class MenuRepository(CantinaDbContext db, CatalogueCache cache, Ti
         if (!string.IsNullOrEmpty(query.Search))
         {
             var pattern = "%" + query.Search.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
-            items = items.Where(x => EF.Functions.ILike(x.Name, pattern, "\\") ||
-                EF.Functions.ILike(x.Description, pattern, "\\"));
+            items = items.Where(x => EF.Functions.Like(x.Name.ToLower(), pattern.ToLower(), "\\") ||
+                EF.Functions.Like(x.Description.ToLower(), pattern.ToLower(), "\\"));
         }
         if (query.Kind.HasValue) items = items.Where(x => x.Kind == query.Kind.Value);
         if (query.MinPrice.HasValue) items = items.Where(x => x.Price >= query.MinPrice.Value);
@@ -111,6 +111,8 @@ public sealed class MenuRepository(CantinaDbContext db, CatalogueCache cache, Ti
         entity.Price = input.Price;
         entity.ImageUrl = input.ImageUrl;
         entity.UpdatedAtUtc = clock.GetUtcNow();
+        if (db.Database.IsSqlite())
+            db.Entry(entity).Property<long>("Version").CurrentValue++;
         await db.SaveChangesAsync(ct);
         db.Entry(entity).State = EntityState.Detached;
         cache.Invalidate(storeId);
@@ -128,9 +130,10 @@ public sealed class MenuRepository(CantinaDbContext db, CatalogueCache cache, Ti
     {
         input = CatalogueValidation.Validate(input);
         var now = clock.GetUtcNow();
+        var storedNow = db.Database.IsSqlite() ? (object)now.UtcTicks : now;
         var affected = await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO "Ratings" ("StoreId", "MenuItemId", "CustomerId", "Score", "ReviewText", "CreatedAtUtc", "UpdatedAtUtc")
-            SELECT "StoreId", "Id", {customerId}, {input.Score}, {input.ReviewText}, {now}, {now}
+            SELECT "StoreId", "Id", {customerId}, {input.Score}, {input.ReviewText}, {storedNow}, {storedNow}
             FROM "MenuItems" WHERE "StoreId" = {storeId} AND "Id" = {itemId}
             ON CONFLICT ("StoreId", "MenuItemId", "CustomerId")
             DO UPDATE SET "Score" = EXCLUDED."Score", "ReviewText" = EXCLUDED."ReviewText",

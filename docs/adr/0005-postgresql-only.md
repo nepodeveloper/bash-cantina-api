@@ -1,6 +1,6 @@
-# ADR 0005: PostgreSQL everywhere, including tests
+# ADR 0005: PostgreSQL for production and integration tests
 
-**Status:** Accepted — 2026-10-28 (supersedes the optional EF Core in-memory provider)
+**Status:** Accepted — 2026-10-28; local development scope updated by [ADR 0011](0011-local-sqlite-development.md)
 
 ## Context
 
@@ -13,9 +13,9 @@ ran in production.
 
 ## Decision
 
-Remove the in-memory provider and every `Database.IsRelational()` branch. The composition
-root requires `ConnectionStrings:DefaultConnection` and always configures Npgsql.
-Integration tests use real, isolated PostgreSQL containers.
+Remove the in-memory provider and every `Database.IsRelational()` branch. Production and
+integration tests use Npgsql; integration tests use real, isolated PostgreSQL containers.
+The local-development provider is addressed separately by ADR 0011.
 
 ## Consequences
 

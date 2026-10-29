@@ -44,24 +44,20 @@ docker compose down -v
 
 ## Run and debug in VS Code on Windows
 
-Install the .NET 10 SDK, Docker Desktop, and the recommended C# Dev Kit extension.
-Start only the database and configure the API's development user-secrets:
+Install the .NET 10 SDK and the recommended C# Dev Kit extension. Local development uses
+SQLite; no database server, Docker, or user-secrets are required:
 
 ```powershell
-docker compose up -d db
-dotnet tool restore
 dotnet restore BashCantina.slnx
-$dbPassword = [System.Net.NetworkCredential]::new('', (Read-Host 'Database password from .env' -AsSecureString)).Password
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=cantina;Username=cantina;******" --project src/Cantina.Api
 dotnet run --project src/Cantina.Api --launch-profile http
 ```
 
 Alternatively press **F5**, selecting **Bash Cantina API**. The VS Code launch configuration
-uses port 5080 and applies local migrations. User-secrets are outside the repository but
-are not encrypted; use them only for development. `.env` is read by Compose, **not** by
-`dotnet run`. Do not run both the Compose API and the VS Code API on the same host port.
-For local staff provisioning, set `BootstrapAdmin:Email` and `BootstrapAdmin:Password`
-using user-secrets before starting with migrations enabled.
+uses port 5080 and initializes `src/Cantina.Api/cantina.db` on first run. The file is local
+development state and is ignored by Git. SQLite uses `EnsureCreated`, not the checked-in
+PostgreSQL migrations; delete this file to recreate a fresh local database after model
+changes (this deletes local accounts and data). Docker Compose remains available for the
+PostgreSQL configuration.
 
 ## API v1
 
@@ -270,7 +266,8 @@ rollback, transient retry and replay fit together.
 * **Cantina.Application**: feature contracts, validation, menu commands/queries, and the
   `IMenuRepository`, `IReviewDashboard` and `IIdempotencyStore` ports. No EF Core or HTTP
   dependencies.
-* **Cantina.Infrastructure**: EF Core 10/Npgsql, Identity stores, migrations, seed data,
+* **Cantina.Infrastructure**: EF Core 10 with SQLite local development and Npgsql for
+  PostgreSQL deployments/tests, Identity stores, migrations, seed data,
   async repository implementations, transactional account provisioning, and a bounded
   catalogue cache.
 * **Cantina.Api**: HTTP composition, versioned feature endpoints, authentication and
@@ -285,16 +282,17 @@ interface.
 
 Reads use no-tracking DTO projections, database filtering/sorting, and bounded pagination,
 not full-table materialization. Foreign keys, unique keys, check constraints, and store
-indexes enforce integrity. Ratings use a parameterized atomic PostgreSQL upsert with a
-composite store/item foreign key. Menu-item updates carry PostgreSQL's `xmin` row version
-as a concurrency token, so a lost update returns `409` instead of silently overwriting.
+indexes enforce integrity. Ratings use a parameterized atomic upsert with a composite
+store/item foreign key. Menu-item updates use a concurrency token, so a lost update returns
+`409` instead of silently overwriting. SQLite is the no-install local option; PostgreSQL
+remains the production and integration-test provider. The local SQLite database is not
+automatically migrated and is not intended for multi-instance deployment.
 Account creation is transactional, and transient database faults are retried in place.
-Shared Identity users have no home-store restriction. PostgreSQL is the only supported
-provider, in development, test and production alike.
+Shared Identity users have no home-store restriction.
 
 Design decisions and their trade-offs are recorded as ADRs in [docs/adr](docs/adr):
 modular monolith, bearer tokens over cookies, slug routing, the process-local cache,
-PostgreSQL-only testing, URL-segment versioning, optimistic concurrency, the review
+PostgreSQL integration testing, local SQLite development, URL-segment versioning, optimistic concurrency, the review
 dashboard, external OIDC login, and failure recovery.
 
 The cache holds at most 1,024 entries for 30 seconds; each catalogue page is capped at
@@ -319,7 +317,7 @@ dotnet Cantina.Api.dll --initialize-database
 dotnet ef migrations add ChangeName --project src/Cantina.Infrastructure --startup-project src/Cantina.Api
 ```
 
-The checked-in initial migration contains catalogue seed data. The one-shot initializer
+The checked-in migrations target PostgreSQL and contain catalogue seed data. The one-shot initializer
 also creates Identity roles and optionally a bootstrap administrator. Run it as a
 single deployment job using a migration-capable database identity. Normal production
 instances should set `Database__ApplyMigrations=false` and use a least-privilege database
@@ -331,7 +329,8 @@ in place of `:`:
 
 | Environment variable | Purpose / default |
 |---|---|
-| `ConnectionStrings__DefaultConnection` | Required PostgreSQL connection string; no embedded default |
+| `Database__Provider` | `Sqlite` by default for local runs; set `PostgreSQL` for Compose/deployments |
+| `ConnectionStrings__DefaultConnection` | Optional for SQLite (`Data Source=cantina.db`); required for PostgreSQL |
 | `Database__ApplyMigrations` | `false`; local Compose/debug profiles opt in |
 | `DataProtection__KeysPath` | Durable token-protection key directory; configure for deployment |
 | `BootstrapAdmin__Email`, `BootstrapAdmin__Password` | Optional, new-account-only initial provisioning |
@@ -377,12 +376,14 @@ For production:
   tokens, or passwords. Configure a central sink/retention policy outside this sample.
 
 Liveness is `/health/live`; readiness is `/health/ready`, which runs a registered
-health check that asynchronously probes PostgreSQL without disclosing connection details.
+health check against the configured database without disclosing connection details.
 Both return `{"status":"healthy"}` or a `503` ProblemDetails. OpenAPI is available only in
 Development. The API deliberately does not enable broad CORS or expose public
 staff-management routes.
 
 ## Tests and quality checks
+
+For a step-by-step manual API walkthrough, see [End-to-End Testing in Swagger](docs/testing-in-swagger.md).
 
 ```powershell
 dotnet build BashCantina.slnx -c Release -warnaserror

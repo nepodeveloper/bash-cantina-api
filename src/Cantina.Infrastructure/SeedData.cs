@@ -23,7 +23,10 @@ public static class SeedData
         var password = configuration["BootstrapAdmin:Password"];
 
         var db = provider.GetRequiredService<CantinaDbContext>();
-        await db.Database.MigrateAsync(cancellationToken);
+        if (db.Database.IsSqlite())
+            await db.Database.EnsureCreatedAsync(cancellationToken);
+        else
+            await db.Database.MigrateAsync(cancellationToken);
         var roles = provider.GetRequiredService<RoleManager<IdentityRole>>();
         foreach (var role in new[] { "Customer", "StoreManager", "Admin" })
         {

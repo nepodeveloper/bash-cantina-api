@@ -20,6 +20,7 @@ services:
       context: .
     environment:
       ASPNETCORE_ENVIRONMENT: Development
+      Database__Provider: PostgreSQL
       ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=cantina;Username=cantina;****** POSTGRES_PASSWORD in .env}
       Database__ApplyMigrations: "true"
       DataProtection__KeysPath: /var/cantina/keys

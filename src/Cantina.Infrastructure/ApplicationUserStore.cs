@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using Npgsql;
 
 namespace Cantina.Infrastructure;
@@ -19,6 +20,10 @@ public sealed class ApplicationUserStore(CantinaDbContext context, IdentityError
             SqlState: PostgresErrorCodes.UniqueViolation,
             TableName: "AspNetUsers",
             ConstraintName: "UserNameIndex" or "EmailIndex"
+        } || exception.InnerException is SqliteException
+        {
+            SqliteErrorCode: 19,
+            SqliteExtendedErrorCode: 1555 or 2067
         })
         {
             Context.Entry(user).State = EntityState.Detached;

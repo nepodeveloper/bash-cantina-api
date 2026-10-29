@@ -128,6 +128,7 @@ public class ApiFixture : IAsyncLifetime
     {
         private Dictionary<string, string?> Settings => new()
         {
+            ["Database:Provider"] = "PostgreSQL",
             ["ConnectionStrings:DefaultConnection"] = connectionString,
             ["Database:ApplyMigrations"] = "true",
             ["Authentication:RateLimit:PermitLimit"] = authLimit.ToString(),

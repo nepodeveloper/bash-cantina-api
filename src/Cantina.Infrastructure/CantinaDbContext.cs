@@ -2,6 +2,7 @@ using Cantina.Domain;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace Cantina.Infrastructure;
 
@@ -22,20 +23,22 @@ public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        var isSqlite = Database.IsSqlite();
+        var trimFunction = isSqlite ? "trim" : "btrim";
         builder.Entity<ApplicationUser>(entity =>
         {
             entity.HasIndex(x => x.NormalizedEmail).HasDatabaseName("EmailIndex").IsUnique();
             entity.Property(x => x.Name).HasMaxLength(120).IsRequired();
             entity.ToTable("AspNetUsers", table =>
-                table.HasCheckConstraint("CK_AspNetUsers_Name", """length(btrim("Name")) > 0"""));
+                table.HasCheckConstraint("CK_AspNetUsers_Name", $"""length({trimFunction}("Name")) > 0"""));
         });
 
         builder.Entity<Store>(entity =>
         {
             entity.ToTable("Stores", table =>
             {
-                table.HasCheckConstraint("CK_Stores_Slug", """length(btrim("Slug")) > 0""");
-                table.HasCheckConstraint("CK_Stores_Name", """length(btrim("Name")) > 0""");
+                table.HasCheckConstraint("CK_Stores_Slug", $"""length({trimFunction}("Slug")) > 0""");
+                table.HasCheckConstraint("CK_Stores_Name", $"""length({trimFunction}("Name")) > 0""");
             });
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Slug).HasMaxLength(80).IsRequired();
@@ -72,15 +75,22 @@ public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
             entity.ToTable("MenuItems", table =>
             {
                 table.HasCheckConstraint("CK_MenuItems_Kind", "\"Kind\" IN (1, 2)");
-                table.HasCheckConstraint("CK_MenuItems_Price", "\"Price\" >= 0 AND \"Price\" <= 99999999.99");
-                table.HasCheckConstraint("CK_MenuItems_Name", """length(btrim("Name")) > 0""");
-                table.HasCheckConstraint("CK_MenuItems_Description", """length(btrim("Description")) > 0""");
-                table.HasCheckConstraint("CK_MenuItems_ImageUrl", "\"ImageUrl\" ILIKE 'https://%'");
+                table.HasCheckConstraint("CK_MenuItems_Price", isSqlite
+                    ? "\"Price\" >= 0 AND \"Price\" <= 9999999999"
+                    : "\"Price\" >= 0 AND \"Price\" <= 99999999.99");
+                table.HasCheckConstraint("CK_MenuItems_Name", $"""length({trimFunction}("Name")) > 0""");
+                table.HasCheckConstraint("CK_MenuItems_Description", $"""length({trimFunction}("Description")) > 0""");
+                table.HasCheckConstraint("CK_MenuItems_ImageUrl", isSqlite
+                    ? "lower(\"ImageUrl\") LIKE 'https://%'"
+                    : "\"ImageUrl\" ILIKE 'https://%'");
             });
             entity.HasKey(x => x.Id);
             entity.HasAlternateKey(x => new { x.StoreId, x.Id });
-            // PostgreSQL's hidden xmin system column is the row version; it adds no physical column.
-            entity.Property<uint>("xmin").HasColumnName("xmin").ValueGeneratedOnAddOrUpdate().IsConcurrencyToken();
+            if (isSqlite)
+                entity.Property<long>("Version").HasDefaultValue(0).IsConcurrencyToken();
+            else
+                // PostgreSQL's hidden xmin system column is the row version; it adds no physical column.
+                entity.Property<uint>("xmin").HasColumnName("xmin").ValueGeneratedOnAddOrUpdate().IsConcurrencyToken();
             entity.Property(x => x.Name).HasMaxLength(120).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(2000).IsRequired();
             entity.Property(x => x.ImageUrl).HasMaxLength(2048).IsRequired();
@@ -105,6 +115,26 @@ public sealed class CantinaDbContext(DbContextOptions<CantinaDbContext> options)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Cascade);
         });
+
+        if (isSqlite)
+        {
+            var dateTimeOffsetConverter = new ValueConverter<DateTimeOffset, long>(
+                value => value.UtcTicks, ticks => new DateTimeOffset(ticks, TimeSpan.Zero));
+            var nullableDateTimeOffsetConverter = new ValueConverter<DateTimeOffset?, long?>(
+                value => value.HasValue ? value.Value.UtcTicks : null,
+                ticks => ticks.HasValue ? new DateTimeOffset(ticks.Value, TimeSpan.Zero) : null);
+            var priceConverter = new ValueConverter<decimal, long>(
+                value => decimal.ToInt64(value * 100m), cents => cents / 100m);
+            foreach (var property in builder.Model.GetEntityTypes().SelectMany(entity => entity.GetProperties()))
+            {
+                if (property.ClrType == typeof(DateTimeOffset))
+                    property.SetValueConverter(dateTimeOffsetConverter);
+                else if (property.ClrType == typeof(DateTimeOffset?))
+                    property.SetValueConverter(nullableDateTimeOffsetConverter);
+                else if (property.ClrType == typeof(decimal))
+                    property.SetValueConverter(priceConverter);
+            }
+        }
 
         builder.Entity<IdempotencyRecord>(entity =>
         {

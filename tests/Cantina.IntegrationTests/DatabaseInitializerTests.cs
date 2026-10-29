@@ -22,6 +22,7 @@ public sealed class DatabaseInitializerTests
         };
         start.ArgumentList.Add(assembly);
         start.ArgumentList.Add("--initialize-database");
+        start.Environment["Database__Provider"] = "PostgreSQL";
         start.Environment["ConnectionStrings__DefaultConnection"] = database.GetConnectionString();
         start.Environment["Database__ApplyMigrations"] = "false";
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
